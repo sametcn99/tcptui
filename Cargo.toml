@@ -1,0 +1,45 @@
+[package]
+name = "tcptui"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal UI clone of Sysinternals TCPView for Windows"
+
+[lib]
+name = "tcptui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tcptui"
+path = "src/main.rs"
+
+[[bin]]
+name = "tcpvcon"
+path = "src/tcpvcon.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+arboard = "3.6.1"
+chrono = "0.4.45"
+crossterm = "0.29.0"
+csv = "1.4.0"
+netstat2 = "0.11.2"
+ratatui = "0.30.2"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sysinfo = "0.39.6"
+thiserror = "2.0.21"
+toml = "1.1.8"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
+
+[profile.release]
+lto = "thin"
+strip = true

@@ -49,9 +49,9 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
         Mode::SortSetup => sort_setup_key(app, code),
         Mode::Export => export_key(app, code),
         Mode::Stats | Mode::Log => stats_log_key(app, code),
-        Mode::Chart | Mode::Rules | Mode::Profiles | Mode::Settings | Mode::Vt => {
-            misc_popup_key(app, code)
-        }
+        Mode::Chart => chart_key(app, code),
+        Mode::Rules => rules_key(app, code),
+        Mode::Profiles | Mode::Settings | Mode::Vt => misc_popup_key(app, code),
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
     }
 }
@@ -61,6 +61,97 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
 fn misc_popup_key(app: &mut App, code: KeyCode) {
     if matches!(code, KeyCode::Esc | KeyCode::Char('q')) {
         app.mode = Mode::Normal;
+    }
+}
+
+/// Bandwidth chart popup: Tab switches between total and selected series.
+fn chart_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => app.mode = Mode::Normal,
+        KeyCode::Tab => {
+            app.bw_view = match app.bw_view {
+                crate::app::BwView::Total => crate::app::BwView::Selected,
+                crate::app::BwView::Selected => crate::app::BwView::Total,
+            };
+        }
+        _ => {}
+    }
+}
+
+/// Rules popup (alerts + coloring rules) with an inline add-rule input.
+fn rules_key(app: &mut App, code: KeyCode) {
+    // While an input line is active, all keys feed it.
+    if let Some(input) = app.rules_input.as_mut() {
+        match code {
+            KeyCode::Enter => {
+                let value = input.value.trim().to_string();
+                let result = match app.rules_tab {
+                    crate::app::RulesTab::Alerts => app.add_alert_rule(&value),
+                    crate::app::RulesTab::Colors => app.add_color_rule(&value),
+                };
+                if let Err(e) = result {
+                    app.push_status(e);
+                } else {
+                    app.push_status("Rule added");
+                }
+                app.rules_input = None;
+            }
+            KeyCode::Esc => app.rules_input = None,
+            KeyCode::Backspace => input.backspace(),
+            KeyCode::Char(c) => input.push(c),
+            _ => {}
+        }
+        return;
+    }
+
+    let list_len = match app.rules_tab {
+        crate::app::RulesTab::Alerts => app.alerts.len(),
+        crate::app::RulesTab::Colors => app.color_rules.len(),
+    };
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.mode = Mode::Normal;
+            app.save_config();
+        }
+        KeyCode::Tab => {
+            app.rules_tab = match app.rules_tab {
+                crate::app::RulesTab::Alerts => crate::app::RulesTab::Colors,
+                crate::app::RulesTab::Colors => crate::app::RulesTab::Alerts,
+            };
+            app.rules_cursor = 0;
+        }
+        KeyCode::Up | KeyCode::Char('k') => app.rules_cursor = app.rules_cursor.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.rules_cursor = (app.rules_cursor + 1).min(list_len.saturating_sub(1));
+        }
+        KeyCode::Char(' ') => match app.rules_tab {
+            crate::app::RulesTab::Alerts => {
+                if let Some(a) = app.alerts.get_mut(app.rules_cursor) {
+                    a.enabled = !a.enabled;
+                }
+            }
+            crate::app::RulesTab::Colors => {
+                if let Some(c) = app.color_rules.get_mut(app.rules_cursor) {
+                    c.enabled = !c.enabled;
+                }
+            }
+        },
+        KeyCode::Char('a') => {
+            app.rules_input = Some(crate::app::InputLine::default());
+        }
+        KeyCode::Char('x') | KeyCode::Delete => match app.rules_tab {
+            crate::app::RulesTab::Alerts => {
+                if app.rules_cursor < app.alerts.len() {
+                    app.alerts.remove(app.rules_cursor);
+                }
+            }
+            crate::app::RulesTab::Colors => {
+                if app.rules_cursor < app.color_rules.len() {
+                    app.color_rules.remove(app.rules_cursor);
+                }
+            }
+        },
+        _ => {}
     }
 }
 
@@ -107,6 +198,12 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
         KeyCode::Char('o') => {
             app.mode = Mode::SortSetup;
             app.sort_cursor = 0;
+        }
+        KeyCode::Char('B') => app.open_chart(),
+        KeyCode::Char('A') => {
+            app.mode = Mode::Rules;
+            app.rules_cursor = 0;
+            app.rules_input = None;
         }
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             app.apply_preset(c as u8 - b'0');
@@ -162,9 +259,11 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
         KeyCode::Char(' ') => app.toggle_mark(),
         KeyCode::Enter => app.begin_detail(),
         KeyCode::Char('x') => {
-            // Clear marks / filter / search in one stroke.
+            // Clear marks / alerts / filter / search in one stroke.
             if !app.marked.is_empty() {
                 app.marked.clear();
+            } else if !app.alert_pending.is_empty() {
+                app.alert_pending.clear();
             } else if app.filter.is_some() {
                 app.clear_filter();
             } else if app.search.is_some() {

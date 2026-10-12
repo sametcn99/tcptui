@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use crate::app::{App, ColumnId, DisplayCtx, DisplayNode, Mode, cell_text};
-use crate::model::{Protocol, RowChange};
+use crate::model::Protocol;
 
 /// The mark/indent gutter in front of the data columns.
 const GUTTER: u16 = 2;
@@ -170,12 +170,7 @@ fn build_rows(app: &App, ctx: &DisplayCtx<'_>, cols: &[ColumnId]) -> Vec<Row<'st
                         .bg(app.theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    match row.change {
-                        RowChange::New => Style::default().fg(app.theme.new),
-                        RowChange::Deleted => Style::default().fg(app.theme.deleted),
-                        RowChange::Changed => Style::default().fg(app.theme.changed),
-                        RowChange::Unchanged => Style::default().fg(app.theme.normal),
-                    }
+                    app.row_style(row)
                 };
 
                 let marked = app.marked.contains(&row.id);

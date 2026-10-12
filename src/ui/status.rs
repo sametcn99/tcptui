@@ -12,6 +12,9 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
     // Build the left part as plain text so the width math is trivial, then
     // render it as a single span next to the right-aligned info.
     let mut left_text = String::new();
+    if !app.alert_pending.is_empty() {
+        left_text.push_str(&format!("⚠{} ", app.alert_pending.len()));
+    }
     if let Some(watch) = app.watch_pid {
         left_text.push_str(&format!("WATCH {watch} "));
     }
@@ -45,36 +48,6 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
         app.refresh_interval.as_millis(),
         if app.admin { " ADMIN" } else { "" }
     );
-    // Compose left part as plain text to measure width reliably, then split
-    // colored segments for rendering.
-    let mut left_text = String::new();
-    if let Some(watch) = app.watch_pid {
-        left_text.push_str(&format!("WATCH {watch} "));
-    }
-    if let Some(filter) = &app.filter {
-        left_text.push_str(&format!("FILTER:{} ", filter.describe()));
-    }
-    if app.grouped {
-        left_text.push_str("GROUPED ");
-    }
-    left_text.push_str(&format!(
-        "sort:{} ",
-        app.sort
-            .first()
-            .map(|k| format!("{}{}", k.col.header(), if k.desc { '↓' } else { '↑' }))
-            .unwrap_or_default()
-    ));
-    left_text.push_str(if app.toggles.resolve {
-        "resolve:on "
-    } else {
-        "resolve:off "
-    });
-    if !app.toggles.show_unconnected {
-        left_text.push_str("connected-only ");
-    }
-    if !app.toggles.show_loopback {
-        left_text.push_str("no-loopback ");
-    }
 
     let used = left_text.chars().count() as u16;
     let space = area
@@ -90,7 +63,16 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
                 .bg(app.theme.bar)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(left_text),
+        if app.alert_pending.is_empty() {
+            Span::raw(left_text)
+        } else {
+            Span::styled(
+                left_text,
+                Style::default()
+                    .fg(app.theme.deleted)
+                    .add_modifier(Modifier::BOLD),
+            )
+        },
         Span::styled(right, Style::default().fg(app.theme.dim)),
     ];
 
@@ -107,8 +89,17 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             format!(" {msg}"),
             Style::default().fg(app.theme.changed),
         )),
+        None if !app.alert_pending.is_empty() => Line::from(Span::styled(
+            format!(
+                " ⚠ {} (x clears)",
+                app.alert_pending.last().unwrap_or(&String::new())
+            ),
+            Style::default()
+                .fg(app.theme.deleted)
+                .add_modifier(Modifier::BOLD),
+        )),
         None => Line::from(Span::styled(
-            " ?:help  /:filter  1-8:presets  o:sort  Ctrl+F:search  c:close  K:kill  e:export  q:quit",
+            " ?:help  /:filter  1-8:presets  o:sort  B:chart  A:rules  c:close  K:kill  e:export  q:quit",
             Style::default().fg(app.theme.dim),
         )),
     };

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 
 use crate::config::Config;
 use crate::dns::{self, DnsCache, SharedDnsCache};
@@ -518,6 +518,83 @@ impl InputLine {
     }
 }
 
+/// A parsed alert rule.
+#[derive(Clone, Debug)]
+pub struct AlertState {
+    pub kind: FilterKind,
+    pub enabled: bool,
+}
+
+/// A parsed coloring rule with its resolved style.
+#[derive(Clone, Debug)]
+pub struct ColorRule {
+    pub kind: FilterKind,
+    pub enabled: bool,
+    pub style: Style,
+    /// Original config representation, preserved for lossless persistence.
+    pub raw: crate::config::ColorRuleSerde,
+}
+
+/// Which tab of the rules popup is active.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RulesTab {
+    Alerts,
+    Colors,
+}
+
+/// Parse a ratatui color from a config-friendly name.
+pub fn parse_color(name: &str) -> Option<Color> {
+    let c = match name.to_ascii_lowercase().as_str() {
+        "black" => Color::Black,
+        "red" => Color::Red,
+        "green" => Color::Green,
+        "yellow" => Color::Yellow,
+        "blue" => Color::Blue,
+        "magenta" => Color::Magenta,
+        "cyan" => Color::Cyan,
+        "gray" | "grey" => Color::Gray,
+        "dark_gray" | "dark_grey" => Color::DarkGray,
+        "white" | "light_gray" | "light_grey" => Color::White,
+        "light_red" => Color::LightRed,
+        "light_green" => Color::LightGreen,
+        "light_yellow" => Color::LightYellow,
+        "light_blue" => Color::LightBlue,
+        "light_magenta" => Color::LightMagenta,
+        "light_cyan" => Color::LightCyan,
+        "reset" | "default" => Color::Reset,
+        _ => return None,
+    };
+    Some(c)
+}
+
+/// Which series the bandwidth chart shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BwView {
+    Total,
+    Selected,
+}
+
+/// Rolling-window length for the bandwidth chart (≈2 minutes at 1 s).
+pub const BW_WINDOW: usize = 120;
+
+/// Per-interval byte delta, tolerant of counter resets; 0 when the row was
+/// not seen on the previous snapshot (first sighting establishes a baseline).
+pub fn bw_delta(new: u64, old: Option<u64>) -> u64 {
+    match old {
+        Some(old) if new >= old => new - old,
+        Some(_) => new, // counter reset: everything since the reset
+        None => 0,
+    }
+}
+
+/// Push a sample into a rolling window capped at `cap`.
+pub fn bw_push(window: &mut std::collections::VecDeque<(u64, u64)>, tx: u64, rx: u64, cap: usize) {
+    window.push_back((tx, rx));
+    while window.len() > cap {
+        window.pop_front();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     Close(Vec<ConnectionRow>),
@@ -709,6 +786,24 @@ pub struct App {
     pub select_anchor: usize,
     pub watch_pid: Option<u32>,
     pub grouped: bool,
+
+    // Rules (alerts + coloring)
+    pub alerts: Vec<AlertState>,
+    pub color_rules: Vec<ColorRule>,
+    /// Unacknowledged alert messages (newest last, capped).
+    pub alert_pending: Vec<String>,
+    pub rules_cursor: usize,
+    pub rules_tab: RulesTab,
+    /// Active text input inside the rules popup, if any.
+    pub rules_input: Option<InputLine>,
+
+    // Bandwidth chart state
+    /// Cumulative EStats counters as of the previous snapshot.
+    pub bw_prev: HashMap<RowId, (u64, u64)>,
+    pub bw_total: std::collections::VecDeque<(u64, u64)>,
+    pub bw_selected: std::collections::VecDeque<(u64, u64)>,
+    pub bw_selected_id: Option<RowId>,
+    pub bw_view: BwView,
     pub expanded: HashSet<u32>,
 
     // Columns
@@ -781,6 +876,47 @@ impl App {
             config_sort = default_sort_chain();
         }
 
+        // Rules from config; unparsable entries are skipped (not fatal).
+        let alerts: Vec<AlertState> = config
+            .alerts
+            .iter()
+            .filter_map(|a| {
+                FilterKind::parse(&a.expression)
+                    .ok()
+                    .map(|kind| AlertState {
+                        kind,
+                        enabled: a.enabled,
+                    })
+            })
+            .collect();
+        let color_rules: Vec<ColorRule> = config
+            .colors
+            .iter()
+            .filter_map(|c| {
+                FilterKind::parse(&c.expression).ok().map(|kind| {
+                    let mut style = Style::default();
+                    if let Some(fg) = c.fg.as_deref().and_then(parse_color) {
+                        style = style.fg(fg);
+                    }
+                    if let Some(bg) = c.bg.as_deref().and_then(parse_color) {
+                        style = style.bg(bg);
+                    }
+                    if c.bold {
+                        style = style.add_modifier(ratatui::style::Modifier::BOLD);
+                    }
+                    if c.underline {
+                        style = style.add_modifier(ratatui::style::Modifier::UNDERLINED);
+                    }
+                    ColorRule {
+                        kind,
+                        enabled: c.enabled,
+                        style,
+                        raw: c.clone(),
+                    }
+                })
+            })
+            .collect();
+
         let app = App {
             mode: Mode::Normal,
             should_quit: false,
@@ -816,6 +952,17 @@ impl App {
             select_anchor: 0,
             watch_pid: None,
             grouped: false,
+            alerts,
+            color_rules,
+            alert_pending: Vec::new(),
+            rules_cursor: 0,
+            rules_tab: RulesTab::Alerts,
+            rules_input: None,
+            bw_prev: HashMap::new(),
+            bw_total: std::collections::VecDeque::new(),
+            bw_selected: std::collections::VecDeque::new(),
+            bw_selected_id: None,
+            bw_view: BwView::Total,
             expanded: HashSet::new(),
             column_order,
             column_hidden,
@@ -948,8 +1095,161 @@ impl App {
         self.services = snap.services;
         self.stats = Stats::from_rows(&self.rows);
         self.last_snapshot_at = Some(snap.taken_at);
+        let first_snapshot = self.snapshot_count == 0;
         self.snapshot_count += 1;
+        self.evaluate_alerts(first_snapshot);
+        self.update_bandwidth();
         self.refresh_display();
+    }
+
+    /// Fire alert rules on genuinely new endpoints. The first snapshot is
+    /// skipped so startup does not trigger every rule at once.
+    fn evaluate_alerts(&mut self, first_snapshot: bool) {
+        if first_snapshot || self.alerts.is_empty() {
+            return;
+        }
+        let mut fired: Vec<String> = Vec::new();
+        for row in &self.rows {
+            if row.change != RowChange::New {
+                continue;
+            }
+            for alert in &self.alerts {
+                if alert.enabled && alert.kind.matches_row(row, &self.processes) {
+                    let msg = format!(
+                        "ALERT  '{}' matched {} {} -> {} ({})",
+                        alert.kind.describe(),
+                        row.protocol,
+                        row.local_display(),
+                        row.remote_display(),
+                        row.process_display(),
+                    );
+                    fired.push(msg);
+                }
+            }
+        }
+        for msg in &fired {
+            self.log_event(msg.clone());
+        }
+        self.alert_pending.extend(fired);
+        if self.alert_pending.len() > 100 {
+            let drop = self.alert_pending.len() - 100;
+            self.alert_pending.drain(..drop);
+        }
+    }
+
+    /// Update the bandwidth rolling windows from cumulative EStats counters.
+    fn update_bandwidth(&mut self) {
+        let current: HashMap<RowId, (u64, u64)> = self
+            .rows
+            .iter()
+            .filter_map(|r| match (r.tx_bytes, r.rx_bytes) {
+                (Some(tx), Some(rx)) => Some((r.id.clone(), (tx, rx))),
+                _ => None,
+            })
+            .collect();
+
+        let mut dtx = 0u64;
+        let mut drx = 0u64;
+        for (id, (tx, rx)) in &current {
+            if let Some((ptx, prx)) = self.bw_prev.get(id) {
+                dtx += bw_delta(*tx, Some(*ptx));
+                drx += bw_delta(*rx, Some(*prx));
+            }
+        }
+        bw_push(&mut self.bw_total, dtx, drx, BW_WINDOW);
+
+        if let Some(id) = &self.bw_selected_id
+            && let Some((tx, rx)) = current.get(id)
+            && let Some((ptx, prx)) = self.bw_prev.get(id)
+        {
+            bw_push(
+                &mut self.bw_selected,
+                bw_delta(*tx, Some(*ptx)),
+                bw_delta(*rx, Some(*prx)),
+                BW_WINDOW,
+            );
+        }
+
+        self.bw_prev = current;
+    }
+
+    /// Open the bandwidth chart, tracking the selected row when there is one.
+    pub fn open_chart(&mut self) {
+        self.bw_selected_id = self.current_row().map(|r| r.id.clone());
+        self.bw_selected.clear();
+        self.bw_view = BwView::Total;
+        self.mode = Mode::Chart;
+    }
+
+    /// Style for a non-selected row: change highlight wins, then the first
+    /// matching coloring rule, then the theme default.
+    pub fn row_style(&self, row: &ConnectionRow) -> Style {
+        match row.change {
+            RowChange::New => Style::default().fg(self.theme.new),
+            RowChange::Deleted => Style::default().fg(self.theme.deleted),
+            RowChange::Changed => Style::default().fg(self.theme.changed),
+            RowChange::Unchanged => {
+                for rule in &self.color_rules {
+                    if rule.enabled && rule.kind.matches_row(row, &self.processes) {
+                        return rule.style;
+                    }
+                }
+                Style::default().fg(self.theme.normal)
+            }
+        }
+    }
+
+    /// Add an alert rule from raw input; returns an error message on parse failure.
+    pub fn add_alert_rule(&mut self, expression: &str) -> Result<(), String> {
+        let kind = FilterKind::parse(expression)?;
+        self.alerts.push(AlertState {
+            kind,
+            enabled: true,
+        });
+        Ok(())
+    }
+
+    /// Add a coloring rule from `<expr> | fg=cyan bold` style input.
+    pub fn add_color_rule(&mut self, input: &str) -> Result<(), String> {
+        let (expr, style_part) = match input.split_once('|') {
+            Some((e, s)) => (e.trim(), s.trim()),
+            None => (input.trim(), ""),
+        };
+        let kind = FilterKind::parse(expr)?;
+        let mut style = Style::default();
+        let mut raw = crate::config::ColorRuleSerde {
+            expression: kind.describe(),
+            ..Default::default()
+        };
+        for token in style_part.split_whitespace() {
+            let token = token.trim();
+            if let Some(name) = token.strip_prefix("fg=") {
+                let color = parse_color(name).ok_or_else(|| format!("unknown color '{name}'"))?;
+                style = style.fg(color);
+                raw.fg = Some(name.to_ascii_lowercase());
+            } else if let Some(name) = token.strip_prefix("bg=") {
+                let color = parse_color(name).ok_or_else(|| format!("unknown color '{name}'"))?;
+                style = style.bg(color);
+                raw.bg = Some(name.to_ascii_lowercase());
+            } else if token == "bold" {
+                style = style.add_modifier(ratatui::style::Modifier::BOLD);
+                raw.bold = true;
+            } else if token == "underline" {
+                style = style.add_modifier(ratatui::style::Modifier::UNDERLINED);
+                raw.underline = true;
+            } else {
+                return Err(format!(
+                    "unknown style token '{token}' (expected fg=, bg=, bold, underline)"
+                ));
+            }
+        }
+        self.color_rules.push(ColorRule {
+            kind,
+            enabled: true,
+            style,
+            raw,
+        });
+        Ok(())
     }
 
     /// Recompute visible rows, sorting, grouping and DNS requests after any
@@ -1774,6 +2074,23 @@ impl App {
             .collect();
         cfg.estats.enabled = self.estats_enabled;
         cfg.set_column_layout(&self.column_order, &self.column_hidden, &self.column_width);
+        cfg.alerts = self
+            .alerts
+            .iter()
+            .map(|a| crate::config::AlertSerde {
+                expression: a.kind.describe(),
+                enabled: a.enabled,
+            })
+            .collect();
+        cfg.colors = self
+            .color_rules
+            .iter()
+            .map(|c| crate::config::ColorRuleSerde {
+                expression: c.kind.describe(),
+                enabled: c.enabled,
+                ..c.raw.clone()
+            })
+            .collect();
         if let Err(e) = cfg.save() {
             eprintln!("warning: could not save config: {e}");
         }
@@ -1795,7 +2112,7 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
-    fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
+    pub(crate) fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(a, b, c, d))
     }
 
@@ -2038,7 +2355,7 @@ mod tests {
 
     /// Two-row snapshot with distinct protocols/states shared by the
     /// stateful tests above.
-    fn synthetic_snapshot_like() -> Snapshot {
+    pub(crate) fn synthetic_snapshot_like() -> Snapshot {
         Snapshot {
             taken_at: Local::now(),
             rows: vec![
@@ -2056,5 +2373,107 @@ mod tests {
             processes: HashMap::new(),
             services: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod phase_b_tests {
+    use super::tests::{synthetic_snapshot_like, v4};
+    use super::*;
+
+    #[test]
+    fn bw_delta_baselines_and_resets() {
+        // First sighting: establish baseline, no delta.
+        assert_eq!(bw_delta(1000, None), 0);
+        // Normal growth.
+        assert_eq!(bw_delta(1500, Some(1000)), 500);
+        // Counter reset: everything since the reset counts.
+        assert_eq!(bw_delta(50, Some(1000)), 50);
+        assert_eq!(bw_delta(1000, Some(1000)), 0);
+    }
+
+    #[test]
+    fn bw_window_caps_length() {
+        let mut w = std::collections::VecDeque::new();
+        for i in 0..BW_WINDOW + 20 {
+            bw_push(&mut w, i as u64, 0, BW_WINDOW);
+        }
+        assert_eq!(w.len(), BW_WINDOW);
+        assert_eq!(w.front().copied(), Some((20u64, 0u64)));
+    }
+
+    #[test]
+    fn color_names_parse() {
+        assert_eq!(parse_color("Cyan"), Some(Color::Cyan));
+        assert_eq!(parse_color("dark_grey"), Some(Color::DarkGray));
+        assert_eq!(parse_color("nope"), None);
+    }
+
+    #[test]
+    fn rules_add_toggle_and_style_precedence() {
+        let mut app = App::new(crate::config::Config::default());
+        app.apply_snapshot(synthetic_snapshot_like());
+
+        app.add_alert_rule("proto=udp").unwrap();
+        assert!(app.add_alert_rule("bogus=1").is_err());
+        assert_eq!(app.alerts.len(), 1);
+
+        app.add_color_rule("rport=443 | fg=cyan bold").unwrap();
+        assert!(app.add_color_rule("x | fg=nope").is_err());
+        assert_eq!(app.color_rules.len(), 1);
+
+        // Unchanged matching row takes the rule style; changed rows keep
+        // their change color; non-matching rows use the theme default.
+        let mut udp_row =
+            ConnectionRow::new(Protocol::Udp, v4(0, 0, 0, 0), 5353, None, None, None, 7);
+        udp_row.change = RowChange::Unchanged;
+        app.color_rules[0].kind = FilterKind::parse("proto=udp").unwrap();
+        let style = app.row_style(&udp_row);
+        assert_eq!(style.fg, Some(Color::Cyan));
+
+        udp_row.change = RowChange::New;
+        assert_eq!(app.row_style(&udp_row).fg, Some(app.theme.new));
+
+        let mut tcp_row = ConnectionRow::new(
+            Protocol::Tcp,
+            v4(127, 0, 0, 1),
+            5001,
+            Some(v4(93, 184, 216, 34)),
+            Some(443),
+            Some(netstat2::TcpState::Established),
+            42,
+        );
+        tcp_row.change = RowChange::Unchanged;
+        assert_eq!(app.row_style(&tcp_row).fg, Some(app.theme.normal));
+    }
+
+    #[test]
+    fn alerts_fire_on_new_rows_only() {
+        let mut app = App::new(crate::config::Config::default());
+        app.add_alert_rule("proto=udp").unwrap();
+
+        // First snapshot: everything New, but alerts must stay silent.
+        app.apply_snapshot(synthetic_snapshot_like());
+        assert!(app.alert_pending.is_empty());
+
+        // Second snapshot with an extra UDP endpoint triggers the rule.
+        let mut snap = synthetic_snapshot_like();
+        snap.rows.push(ConnectionRow::new(
+            Protocol::Udp,
+            v4(127, 0, 0, 1),
+            9999,
+            None,
+            None,
+            None,
+            9,
+        ));
+        app.apply_snapshot(snap);
+        assert_eq!(app.alert_pending.len(), 1);
+        assert!(app.alert_pending[0].contains("ALERT"));
+
+        // A repeat of the same snapshot adds nothing new.
+        let snap2 = synthetic_snapshot_like();
+        app.apply_snapshot(snap2);
+        assert_eq!(app.alert_pending.len(), 1);
     }
 }

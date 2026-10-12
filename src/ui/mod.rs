@@ -144,5 +144,43 @@ mod tests {
         press(&mut app, 'g');
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         press(&mut app, 'q');
+
+        // Bandwidth chart popup, both series.
+        press(&mut app, 'B');
+        assert_eq!(app.mode, Mode::Chart);
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let tab = crossterm::event::Event::Key(crossterm::event::KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+        handle_event(&mut app, tab, ratatui::layout::Rect::new(0, 0, 120, 30));
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        press(&mut app, 'q');
+
+        // Rules popup with an alert rule added through the input flow.
+        press(&mut app, 'A');
+        assert_eq!(app.mode, Mode::Rules);
+        press(&mut app, 'a');
+        press(&mut app, 'p');
+        press(&mut app, 'r');
+        press(&mut app, 'o');
+        press(&mut app, 't');
+        press(&mut app, 'o');
+        press(&mut app, '=');
+        press(&mut app, 't');
+        press(&mut app, 'c');
+        press(&mut app, 'p');
+        let enter = Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+        handle_event(&mut app, enter, ratatui::layout::Rect::new(0, 0, 120, 30));
+        assert_eq!(app.alerts.len(), 1);
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        press(&mut app, 'q');
     }
 }

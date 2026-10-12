@@ -4,8 +4,12 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Axis, Block, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph,
+    Wrap,
+};
 
 use crate::app::{App, Mode};
 use crate::export::ExportFormat;
@@ -38,6 +42,8 @@ pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         Mode::Export => draw_export(f, app, area),
         Mode::Stats => draw_stats(f, app, area),
         Mode::Log => draw_log(f, app, area),
+        Mode::Chart => draw_chart(f, app, area),
+        Mode::Rules => draw_rules(f, app, area),
         _ => {}
     }
 }
@@ -59,8 +65,15 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("Up/Down, j/k", "move selection"),
         ("PgUp/PgDn, Home/End", "scroll"),
         ("Space", "mark/unmark rows (batch actions)"),
+        ("Shift+Up/Down/PgUp/PgDn", "mark a range of rows"),
         ("Enter", "process details (double-click too)"),
         ("Left/Right, h/l", "collapse/expand group (grouped view)"),
+        ("", ""),
+        ("Monitoring", ""),
+        ("B", "bandwidth chart (Tab: total/selected)"),
+        ("A", "rules: alerts + coloring (Tab: sections)"),
+        ("alerts", "fire when a NEW endpoint matches an expression"),
+        ("colors", "Wireshark-style row colors by expression"),
         ("", ""),
         ("Filtering", ""),
         ("/", "filter prompt (Up/Down: history)"),
@@ -464,6 +477,231 @@ fn draw_log(f: &mut Frame, app: &App, area: Rect) {
         &format!("Event log — {total} entries (c: copy, j/k: scroll, Esc: close)"),
         app,
     ));
+    f.render_widget(Clear, rect);
+    f.render_widget(list, rect);
+}
+
+/// Bandwidth chart popup (`B`): rolling per-interval Tx/Rx deltas.
+fn draw_chart(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::BwView;
+    use crate::model::format_bytes;
+
+    let rect = centered_rect(80, 55, area);
+    let series = match app.bw_view {
+        BwView::Total => &app.bw_total,
+        BwView::Selected => &app.bw_selected,
+    };
+    let tx_points: Vec<(f64, f64)> = series
+        .iter()
+        .enumerate()
+        .map(|(i, (t, _))| (i as f64, *t as f64))
+        .collect();
+    let rx_points: Vec<(f64, f64)> = series
+        .iter()
+        .enumerate()
+        .map(|(i, (_, r))| (i as f64, *r as f64))
+        .collect();
+
+    let peak = series.iter().map(|(t, r)| (*t).max(*r)).max().unwrap_or(0);
+    let y_max = if peak == 0 {
+        1024.0
+    } else {
+        peak as f64 * 1.15
+    };
+    let x_max = series.len().max(2) as f64;
+
+    let tx: u64 = series.iter().map(|(t, _)| *t).sum();
+    let rx: u64 = series.iter().map(|(_, r)| *r).sum();
+    let n = series.len().max(1) as u64;
+
+    let subject = match (
+        app.bw_view,
+        app.bw_selected_id
+            .as_ref()
+            .and_then(|id| app.rows.iter().find(|r| &r.id == id)),
+    ) {
+        (BwView::Selected, Some(row)) => {
+            format!(
+                "selected: {} {} -> {}",
+                row.process_display(),
+                row.local_display(),
+                row.remote_display()
+            )
+        }
+        (BwView::Selected, None) => "selected endpoint (gone)".to_string(),
+        _ => "total system".to_string(),
+    };
+    let title = format!(
+        "Bandwidth · {} · avg ↑{}/s ↓{}/s · Tab: switch series",
+        subject,
+        format_bytes(tx / n),
+        format_bytes(rx / n),
+    );
+
+    let datasets = vec![
+        Dataset::default()
+            .name(format!("Tx {}", format_bytes(tx)))
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(app.theme.new))
+            .data(&tx_points),
+        Dataset::default()
+            .name(format!("Rx {}", format_bytes(rx)))
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(app.theme.changed))
+            .data(&rx_points),
+    ];
+
+    let x_labels = vec!["-2m".to_string(), "-1m".to_string(), "now".to_string()];
+    let y_labels = vec![
+        "0".to_string(),
+        format_bytes((y_max / 2.0) as u64),
+        format_bytes(peak.max(1)),
+    ];
+
+    let mut chart = Chart::new(datasets)
+        .x_axis(
+            Axis::default()
+                .title("time")
+                .bounds([0.0, x_max])
+                .labels(x_labels),
+        )
+        .y_axis(
+            Axis::default()
+                .title("bytes/interval")
+                .bounds([0.0, y_max])
+                .labels(y_labels),
+        );
+    if !app.estats_enabled {
+        chart = chart.block(
+            popup_block(&title, app)
+                .title(Span::styled(
+                    "  [EStats disabled — enable in settings (M)]  ",
+                    Style::default().fg(app.theme.deleted),
+                ))
+                .title_bottom(Span::styled(
+                    "Esc: close    Tab: total/selected",
+                    Style::default().fg(app.theme.changed),
+                )),
+        );
+    } else {
+        chart = chart.block(popup_block(&title, app).title_bottom(Span::styled(
+            "Esc: close    Tab: total/selected",
+            Style::default().fg(app.theme.changed),
+        )));
+    }
+    f.render_widget(Clear, rect);
+    f.render_widget(chart, rect);
+}
+
+/// Rules popup (`A`): alert rules and coloring rules in two tabs, with an
+/// inline input for adding new rules.
+fn draw_rules(f: &mut Frame, app: &App, area: Rect) {
+    use crate::app::RulesTab;
+    let rect = centered_rect(65, 70, area);
+
+    let mut items: Vec<ListItem> = Vec::new();
+    let (tab_name, other_name) = match app.rules_tab {
+        RulesTab::Alerts => ("Alerts", "Colors"),
+        RulesTab::Colors => ("Colors", "Alerts"),
+    };
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled(
+            format!(" [{tab_name}] "),
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {other_name} "),
+            Style::default().fg(app.theme.dim),
+        ),
+        Span::styled("  (Tab switches)", Style::default().fg(app.theme.dim)),
+    ])));
+    items.push(ListItem::new(Line::from("")));
+
+    match app.rules_tab {
+        RulesTab::Alerts => {
+            if app.alerts.is_empty() {
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "No alert rules. Press 'a' to add one.",
+                    Style::default().fg(app.theme.dim),
+                ))));
+            }
+            for (idx, a) in app.alerts.iter().enumerate() {
+                let style = if idx == app.rules_cursor {
+                    Style::default()
+                        .fg(app.theme.selected_fg)
+                        .bg(app.theme.selected_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else if a.enabled {
+                    Style::default().fg(app.theme.normal)
+                } else {
+                    Style::default().fg(app.theme.dim)
+                };
+                items.push(ListItem::new(Line::from(Span::styled(
+                    format!(
+                        "[{}] {}",
+                        if a.enabled { "x" } else { " " },
+                        a.kind.describe()
+                    ),
+                    style,
+                ))));
+            }
+        }
+        RulesTab::Colors => {
+            if app.color_rules.is_empty() {
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "No coloring rules. Press 'a' to add one.",
+                    Style::default().fg(app.theme.dim),
+                ))));
+            }
+            for (idx, c) in app.color_rules.iter().enumerate() {
+                let style = if idx == app.rules_cursor {
+                    Style::default()
+                        .fg(app.theme.selected_fg)
+                        .bg(app.theme.selected_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    c.style
+                };
+                items.push(ListItem::new(Line::from(Span::styled(
+                    format!(
+                        "[{}] {}",
+                        if c.enabled { "x" } else { " " },
+                        c.kind.describe()
+                    ),
+                    style,
+                ))));
+            }
+        }
+    }
+
+    items.push(ListItem::new(Line::from("")));
+    if let Some(input) = &app.rules_input {
+        let hint = match app.rules_tab {
+            RulesTab::Alerts => "alert expression, e.g. process=python",
+            RulesTab::Colors => "expr | fg=cyan bold, e.g. rport=443 | fg=cyan",
+        };
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("add> ", Style::default().fg(app.theme.accent)),
+            Span::raw(input.value.clone()),
+            Span::styled("▏", Style::default().fg(app.theme.dim)),
+        ])));
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!("({hint} — Enter saves, Esc cancels)"),
+            Style::default().fg(app.theme.dim),
+        ))));
+    } else {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "a:add  Space:enable/disable  x:remove  Tab:switch  Esc:close&save",
+            Style::default().fg(app.theme.changed),
+        ))));
+    }
+
+    let list = List::new(items).block(popup_block("Rules", app));
     f.render_widget(Clear, rect);
     f.render_widget(list, rect);
 }

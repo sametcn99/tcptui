@@ -102,6 +102,49 @@ impl Default for EstatsConfig {
     }
 }
 
+/// One alert rule: fire when a *new* endpoint matches the expression.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AlertSerde {
+    pub expression: String,
+    pub enabled: bool,
+}
+
+impl Default for AlertSerde {
+    fn default() -> Self {
+        Self {
+            expression: String::new(),
+            enabled: true,
+        }
+    }
+}
+
+/// One coloring rule (Wireshark style): rows matching the expression get
+/// the configured style, unless a change highlight or selection applies.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorRuleSerde {
+    pub expression: String,
+    pub enabled: bool,
+    pub fg: Option<String>,
+    pub bg: Option<String>,
+    pub bold: bool,
+    pub underline: bool,
+}
+
+impl Default for ColorRuleSerde {
+    fn default() -> Self {
+        Self {
+            expression: String::new(),
+            enabled: true,
+            fg: None,
+            bg: None,
+            bold: false,
+            underline: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -110,6 +153,12 @@ pub struct Config {
     pub columns: ColumnsSerde,
     #[serde(default)]
     pub estats: EstatsConfig,
+    /// Alert rules fired on newly appearing endpoints.
+    #[serde(default)]
+    pub alerts: Vec<AlertSerde>,
+    /// Wireshark-style row coloring rules.
+    #[serde(default)]
+    pub colors: Vec<ColorRuleSerde>,
 }
 
 /// `%APPDATA%\tcptui\config.toml`.

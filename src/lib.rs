@@ -15,6 +15,7 @@ pub mod config;
 pub mod dns;
 pub mod events;
 pub mod export;
+pub mod filter;
 pub mod model;
 pub mod net;
 pub mod proc;

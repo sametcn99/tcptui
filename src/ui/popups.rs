@@ -34,6 +34,7 @@ pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         Mode::ProcessDetail => draw_detail(f, app, area),
         Mode::Whois => draw_whois(f, app, area),
         Mode::ColumnSetup => draw_column_setup(f, app, area),
+        Mode::SortSetup => draw_sort_setup(f, app, area),
         Mode::Export => draw_export(f, app, area),
         Mode::Stats => draw_stats(f, app, area),
         Mode::Log => draw_log(f, app, area),
@@ -52,7 +53,7 @@ fn popup_block(title: &str, app: &App) -> Block<'static> {
 }
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
-    let rect = centered_rect(70, 85, area);
+    let rect = centered_rect(70, 90, area);
     let help = [
         ("Navigation", ""),
         ("Up/Down, j/k", "move selection"),
@@ -61,11 +62,32 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("Enter", "process details (double-click too)"),
         ("Left/Right, h/l", "collapse/expand group (grouped view)"),
         ("", ""),
-        ("View", ""),
-        ("/", "filter (prefix re: for regex, Esc clears)"),
+        ("Filtering", ""),
+        ("/", "filter prompt (Up/Down: history)"),
+        ("1-8", "presets: 1 tcp  2 udp  3 established  4 listen"),
+        ("", "5 loopback  6 non-loopback  7 new  8 clear"),
         ("Ctrl+F then n/N", "search, next/previous match"),
+        ("", ""),
+        ("Filter syntax", ""),
+        (
+            "process=chrome",
+            "field filters; fields: process path pid proto",
+        ),
+        ("", "state laddr raddr addr lport rport port service"),
+        ("", "tx rx change loopback connected"),
+        ("state=established", "= == != > >= < <= :  (contains)"),
+        ("tx>1MB", "byte units for tx/rx (kb/mb/gb)"),
+        ("laddr=192.168.*", "wildcards * and ?"),
+        ("process~=^chrome", "regex with =~ / !~"),
+        ("a and (b or not c)", "boolean logic, parentheses; && || !"),
+        ("chrome", "bare text still searches every field"),
+        ("", ""),
+        ("Sorting", ""),
         ("s / S", "cycle sort column / reverse direction"),
+        ("o", "sort order editor (multi-key, directions)"),
         ("click header", "sort by column (Shift: add key)"),
+        ("", ""),
+        ("View", ""),
         ("t / u", "toggle TCP / UDP visibility"),
         ("U", "toggle unconnected endpoints (listening, UDP)"),
         ("L", "toggle loopback visibility"),
@@ -233,6 +255,58 @@ fn draw_column_setup(f: &mut Frame, app: &App, area: Rect) {
     state.select(Some(app.column_cursor));
     f.render_widget(Clear, rect);
     f.render_stateful_widget(list, rect, &mut state);
+}
+
+/// Multi-key sort order editor (`o`).
+fn draw_sort_setup(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered_rect(55, 65, area);
+    let mut items: Vec<ListItem> = Vec::new();
+
+    items.push(ListItem::new(Line::from(Span::styled(
+        "Sort priority (top of the table applies first)",
+        Style::default()
+            .fg(app.theme.accent)
+            .add_modifier(Modifier::BOLD),
+    ))));
+    items.push(ListItem::new(Line::from("")));
+
+    for (idx, col) in app.sortable_columns().iter().enumerate() {
+        let pos = app.sort.iter().position(|k| k.col == *col);
+        let line = match pos {
+            Some(p) => {
+                let key = &app.sort[p];
+                format!(
+                    "{} {:<2} {:<16} {}",
+                    p + 1,
+                    if key.desc { '↓' } else { '↑' },
+                    col.header(),
+                    if p == 0 { "(primary)" } else { "" }
+                )
+            }
+            None => format!("  ·  {:<16}", col.header()),
+        };
+        let style = if idx == app.sort_cursor {
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if pos.is_some() {
+            Style::default().fg(app.theme.normal)
+        } else {
+            Style::default().fg(app.theme.dim)
+        };
+        items.push(ListItem::new(Line::from(Span::styled(line, style))));
+    }
+
+    items.push(ListItem::new(Line::from("")));
+    items.push(ListItem::new(Line::from(Span::styled(
+        "Space:toggle/add  x:remove  </>:priority  r:reset  Esc:close&save",
+        Style::default().fg(app.theme.changed),
+    ))));
+
+    let list = List::new(items).block(popup_block("Sort order", app));
+    f.render_widget(Clear, rect);
+    f.render_widget(list, rect);
 }
 
 fn draw_export(f: &mut Frame, app: &App, area: Rect) {

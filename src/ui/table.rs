@@ -106,18 +106,26 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "search"
         };
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::styled(format!("{prompt}> "), Style::default().fg(app.theme.accent)),
             Span::raw(app.filter_or_search_input().to_string()),
             Span::styled("▏", Style::default().fg(app.theme.dim)),
-        ]);
+        ];
+        // Live feedback: match count or parse error while typing a filter.
+        if let Some(feedback) = app.filter_feedback() {
+            spans.push(Span::raw("  "));
+            spans.push(match feedback {
+                Ok(n) => Span::styled(format!("{n} match(es)"), Style::default().fg(app.theme.new)),
+                Err(e) => Span::styled(e, Style::default().fg(app.theme.deleted)),
+            });
+        }
         let input_area = Rect {
             x: area.x + 1,
             y: area.y + area.height.saturating_sub(1),
             width: area.width.saturating_sub(2),
             height: 1,
         };
-        f.render_widget(Paragraph::new(line), input_area);
+        f.render_widget(Paragraph::new(Line::from(spans)), input_area);
     }
 }
 

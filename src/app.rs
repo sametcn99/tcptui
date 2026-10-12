@@ -129,6 +129,24 @@ pub struct SortKey {
     pub desc: bool,
 }
 
+/// The default sort chain: process, then protocol, then local port.
+pub fn default_sort_chain() -> Vec<SortKey> {
+    vec![
+        SortKey {
+            col: ColumnId::Process,
+            desc: false,
+        },
+        SortKey {
+            col: ColumnId::Protocol,
+            desc: false,
+        },
+        SortKey {
+            col: ColumnId::LocalPort,
+            desc: false,
+        },
+    ]
+}
+
 /// Comparison value for a column: numeric columns compare numerically.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum SortValue {
@@ -178,27 +196,45 @@ pub fn sort_rows(rows: &mut [ConnectionRow], keys: &[SortKey]) {
 pub enum FilterKind {
     Plain(String),
     Regex(regex::Regex),
+    /// Structured field expression (`process=chrome and tx>1MB`).
+    Expr {
+        src: String,
+        expr: crate::filter::Expr,
+    },
 }
 
 impl FilterKind {
-    /// Parse filter text; a `re:` prefix switches to regular expressions.
-    /// Plain text is case-insensitive; regexes are compiled with `(?i)`.
+    /// Parse filter text. Routing: a `re:` prefix builds a regex; text with
+    /// operators or boolean keywords is parsed as a structured field
+    /// expression; everything else stays plain free-text search.
     pub fn parse(text: &str) -> Result<FilterKind, String> {
         if let Some(pattern) = text.strip_prefix("re:") {
             let re = regex::RegexBuilder::new(pattern)
                 .case_insensitive(true)
                 .build()
                 .map_err(|e| format!("invalid regex: {e}"))?;
-            Ok(FilterKind::Regex(re))
-        } else {
-            Ok(FilterKind::Plain(text.to_lowercase()))
+            return Ok(FilterKind::Regex(re));
         }
+        if crate::filter::looks_structured(text) {
+            let expr = crate::filter::parse(text)?;
+            return Ok(FilterKind::Expr {
+                src: text.to_string(),
+                expr,
+            });
+        }
+        Ok(FilterKind::Plain(text.to_lowercase()))
     }
 
-    pub fn matches(&self, haystack: &str) -> bool {
+    /// Evaluate against a full row (works for all variants).
+    pub fn matches_row(&self, row: &ConnectionRow, processes: &HashMap<u32, ProcessInfo>) -> bool {
         match self {
-            FilterKind::Plain(p) => haystack.to_lowercase().contains(p),
-            FilterKind::Regex(re) => re.is_match(haystack),
+            FilterKind::Plain(p) => row_haystack(row, processes)
+                .to_lowercase()
+                .contains(p.as_str()),
+            FilterKind::Regex(re) => re.is_match(&row_haystack(row, processes)),
+            FilterKind::Expr { expr, .. } => {
+                crate::filter::matches(expr, &crate::filter::MatchCtx { row, processes })
+            }
         }
     }
 
@@ -206,6 +242,7 @@ impl FilterKind {
         match self {
             FilterKind::Plain(p) => p.clone(),
             FilterKind::Regex(re) => format!("re:{}", re.as_str()),
+            FilterKind::Expr { src, .. } => src.clone(),
         }
     }
 }
@@ -302,11 +339,10 @@ pub fn filter_rows(
             {
                 return false;
             }
-            if let Some(f) = filter {
-                let haystack = row_haystack(r, processes);
-                if !f.matches(&haystack) {
-                    return false;
-                }
+            if let Some(f) = filter
+                && !f.matches_row(r, processes)
+            {
+                return false;
             }
             true
         })
@@ -316,27 +352,7 @@ pub fn filter_rows(
 
 /// Text searched by both filter and search.
 fn row_haystack(row: &ConnectionRow, processes: &HashMap<u32, ProcessInfo>) -> String {
-    let mut parts: Vec<String> = vec![
-        row.process_display(),
-        row.pid.to_string(),
-        row.protocol.to_string(),
-        row.local_addr.to_string(),
-        row.local_port.to_string(),
-    ];
-    if let (Some(a), Some(p)) = (row.remote_addr, row.remote_port) {
-        parts.push(a.to_string());
-        parts.push(p.to_string());
-    }
-    if let Some(s) = row.state {
-        parts.push(s.to_string());
-    }
-    if let Some(s) = &row.service_name {
-        parts.push(s.clone());
-    }
-    if let Some(exe) = processes.get(&row.pid).and_then(|p| p.exe.as_deref()) {
-        parts.push(exe.to_string());
-    }
-    parts.join(" ")
+    crate::filter::haystack(row, processes)
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +422,7 @@ pub enum Mode {
     Whois,
     Help,
     ColumnSetup,
+    SortSetup,
     Export,
     Stats,
     Log,
@@ -625,6 +642,12 @@ pub struct App {
     pub column_hidden: HashSet<ColumnId>,
     pub column_width: HashMap<ColumnId, u16>,
     pub column_cursor: usize,
+    /// Cursor inside the sort-order editor popup.
+    pub sort_cursor: usize,
+    /// Recently applied filters, newest last (max 20).
+    pub filter_history: Vec<String>,
+    /// Position while walking the history with Up/Down.
+    pub filter_history_idx: Option<usize>,
 
     // Popups
     pub confirm: Option<ConfirmAction>,
@@ -673,6 +696,17 @@ impl App {
         let (column_order, column_hidden, column_width) = config.column_layout();
         let theme_name = config.view.theme.clone();
 
+        // Sort order from config; fall back to the default chain.
+        let mut config_sort: Vec<SortKey> = config
+            .view
+            .sort
+            .iter()
+            .filter_map(|s| ColumnId::from_key(&s.col).map(|col| SortKey { col, desc: s.desc }))
+            .collect();
+        if config_sort.is_empty() {
+            config_sort = default_sort_chain();
+        }
+
         let app = App {
             mode: Mode::Normal,
             should_quit: false,
@@ -697,22 +731,11 @@ impl App {
             refresh_interval: interval,
             filter: None,
             filter_input: InputLine::default(),
+            filter_history: Vec::new(),
+            filter_history_idx: None,
             search: None,
             search_input: InputLine::default(),
-            sort: vec![
-                SortKey {
-                    col: ColumnId::Process,
-                    desc: false,
-                },
-                SortKey {
-                    col: ColumnId::Protocol,
-                    desc: false,
-                },
-                SortKey {
-                    col: ColumnId::LocalPort,
-                    desc: false,
-                },
-            ],
+            sort: config_sort,
             selected: 0,
             offset: 0,
             marked: HashSet::new(),
@@ -723,6 +746,7 @@ impl App {
             column_hidden,
             column_width,
             column_cursor: 0,
+            sort_cursor: 0,
             confirm: None,
             detail_pid: None,
             detail_lines: Vec::new(),
@@ -1047,6 +1071,153 @@ impl App {
         self.refresh_display();
     }
 
+    /// Columns offered by the sort editor (everything sortable).
+    pub fn sortable_columns(&self) -> Vec<ColumnId> {
+        self.column_order
+            .iter()
+            .copied()
+            .filter(|c| *c != ColumnId::Mark)
+            .collect()
+    }
+
+    /// Toggle a column's sort direction; append it to the chain if absent.
+    pub fn sort_toggle_column(&mut self, col: ColumnId) {
+        if let Some(existing) = self.sort.iter_mut().find(|k| k.col == col) {
+            existing.desc = !existing.desc;
+        } else if self.sort.len() < 6 {
+            self.sort.push(SortKey { col, desc: false });
+        }
+        self.refresh_display();
+    }
+
+    /// Drop a column from the sort chain (keeps at least one key).
+    pub fn sort_remove_column(&mut self, col: ColumnId) {
+        self.sort.retain(|k| k.col != col);
+        if self.sort.is_empty() {
+            self.sort = default_sort_chain();
+        }
+        self.refresh_display();
+    }
+
+    /// Move a column's priority inside the sort chain by `delta` slots.
+    pub fn sort_move_column(&mut self, col: ColumnId, delta: i32) {
+        let Some(pos) = self.sort.iter().position(|k| k.col == col) else {
+            return;
+        };
+        let target = (pos as i32 + delta).clamp(0, self.sort.len() as i32 - 1) as usize;
+        let key = self.sort.remove(pos);
+        self.sort.insert(target, key);
+        self.refresh_display();
+    }
+
+    pub fn sort_reset_default(&mut self) {
+        self.sort = default_sort_chain();
+        self.refresh_display();
+    }
+
+    /// Quick filter presets bound to the number keys.
+    pub fn apply_preset(&mut self, n: u8) {
+        let text = match n {
+            1 => "proto=tcp",
+            2 => "proto=udp",
+            3 => "state=established",
+            4 => "state=listen",
+            5 => "loopback=true",
+            6 => "loopback=false",
+            7 => "change=new",
+            8 => "",
+            _ => return,
+        };
+        if text.is_empty() {
+            self.clear_filter();
+            self.push_status("Filter cleared");
+            return;
+        }
+        match FilterKind::parse(text) {
+            Ok(f) => {
+                self.filter = Some(f);
+                self.filter_input.value = text.to_string();
+                self.selected = 0;
+                self.refresh_display();
+                self.push_status(format!("Preset {n}: {text}"));
+            }
+            Err(e) => self.push_status(e),
+        }
+    }
+
+    /// Live feedback while typing in the filter prompt: either the number of
+    /// rows the current text would keep, or a parse error.
+    pub fn filter_feedback(&self) -> Option<Result<usize, String>> {
+        if self.mode != Mode::Filtering {
+            return None;
+        }
+        let text = self.filter_input.value.trim();
+        if text.is_empty() {
+            let base = filter_rows(
+                &self.rows,
+                &self.toggles,
+                self.watch_pid,
+                None,
+                &self.processes,
+            );
+            return Some(Ok(base.len()));
+        }
+        Some(FilterKind::parse(text).map(|f| {
+            filter_rows(
+                &self.rows,
+                &self.toggles,
+                self.watch_pid,
+                None,
+                &self.processes,
+            )
+            .iter()
+            .filter(|r| f.matches_row(r, &self.processes))
+            .count()
+        }))
+    }
+
+    /// Recall an earlier filter (Up in the filter prompt).
+    pub fn filter_history_prev(&mut self) {
+        if self.filter_history.is_empty() {
+            return;
+        }
+        let idx = match self.filter_history_idx {
+            Some(i) if i > 0 => i - 1,
+            Some(_) => 0,
+            None => self.filter_history.len() - 1,
+        };
+        self.filter_history_idx = Some(idx);
+        self.filter_input.value = self.filter_history[idx].clone();
+    }
+
+    /// Walk back towards the newest entry (Down in the filter prompt).
+    pub fn filter_history_next(&mut self) {
+        let Some(idx) = self.filter_history_idx else {
+            return;
+        };
+        if idx + 1 < self.filter_history.len() {
+            self.filter_history_idx = Some(idx + 1);
+            self.filter_input.value = self.filter_history[idx + 1].clone();
+        } else {
+            self.filter_history_idx = None;
+            self.filter_input.clear();
+        }
+    }
+
+    fn remember_filter(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.filter_history.last().is_none_or(|last| last != text) {
+            self.filter_history.push(text.to_string());
+        }
+        if self.filter_history.len() > 20 {
+            let drop = self.filter_history.len() - 20;
+            self.filter_history.drain(..drop);
+        }
+        self.filter_history_idx = None;
+    }
+
     // -- Filter / search ---------------------------------------------------------
 
     pub fn apply_filter_input(&mut self) {
@@ -1055,7 +1226,10 @@ impl App {
             None
         } else {
             match FilterKind::parse(&text) {
-                Ok(f) => Some(f),
+                Ok(f) => {
+                    self.remember_filter(&text);
+                    Some(f)
+                }
                 Err(e) => {
                     self.push_status(e);
                     self.filter.clone()
@@ -1110,9 +1284,14 @@ impl App {
                 DisplayNode::Conn(i) => self
                     .visible
                     .get(*i)
-                    .map(|r| search.matches(&row_haystack(r, &self.processes)))
+                    .map(|r| search.matches_row(r, &self.processes))
                     .unwrap_or(false),
-                DisplayNode::Group { name, .. } => search.matches(name),
+                DisplayNode::Group { name, .. } => match &search {
+                    FilterKind::Plain(p) => name.to_lowercase().contains(p),
+                    FilterKind::Regex(re) => re.is_match(name),
+                    // Structured filters apply to rows, not group headers.
+                    FilterKind::Expr { .. } => false,
+                },
             })
             .map(|(idx, _)| idx)
             .collect();
@@ -1487,6 +1666,14 @@ impl App {
         cfg.view.show_unconnected = self.toggles.show_unconnected;
         cfg.view.show_loopback = self.toggles.show_loopback;
         cfg.view.theme = self.theme_name.clone();
+        cfg.view.sort = self
+            .sort
+            .iter()
+            .map(|k| crate::config::SortKeySerde {
+                col: k.col.key().to_string(),
+                desc: k.desc,
+            })
+            .collect();
         cfg.estats.enabled = self.estats_enabled;
         cfg.set_column_layout(&self.column_order, &self.column_hidden, &self.column_width);
         if let Err(e) = cfg.save() {
@@ -1578,9 +1765,40 @@ mod tests {
     #[test]
     fn filter_regex_prefix_compiles_case_insensitive() {
         let f = FilterKind::parse("re:^chrome").unwrap();
-        assert!(f.matches("Chrome.exe"));
-        assert!(!f.matches("mychrome"));
+        let mut r = sample_rows().remove(0);
+        r.process_name = Some("Chrome.exe".into());
+        assert!(f.matches_row(&r, &HashMap::new()));
+        r.process_name = Some("mychrome".into());
+        assert!(!f.matches_row(&r, &HashMap::new()));
         assert!(FilterKind::parse("re:[").is_err());
+    }
+
+    #[test]
+    fn structured_expression_filter_end_to_end() {
+        let mut rows = sample_rows();
+        rows[0].process_name = Some("chrome.exe".into());
+        rows[1].process_name = Some("firefox.exe".into());
+
+        let f = FilterKind::parse("process:chrome and port=443").unwrap();
+        let out = filter_rows(&rows, &toggles(), None, Some(&f), &HashMap::new());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].pid, 100);
+
+        let f = FilterKind::parse("state=established and pid>=200").unwrap();
+        let out = filter_rows(&rows, &toggles(), None, Some(&f), &HashMap::new());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].pid, 200);
+
+        let f = FilterKind::parse("proto=udp or rport=853").unwrap();
+        let out = filter_rows(&rows, &toggles(), None, Some(&f), &HashMap::new());
+        assert_eq!(out.len(), 2);
+
+        // Free text keeps working for addr:port style searches.
+        let f = FilterKind::parse("93.184.216.34:443").unwrap();
+        let out = filter_rows(&rows, &toggles(), None, Some(&f), &HashMap::new());
+        assert_eq!(out.len(), 1);
+
+        assert!(FilterKind::parse("bogus=1").is_err());
     }
 
     #[test]
@@ -1662,6 +1880,83 @@ mod tests {
     fn sort_describe_and_column_keys_roundtrip() {
         for id in DEFAULT_COLUMN_ORDER {
             assert_eq!(ColumnId::from_key(id.key()), Some(*id));
+        }
+    }
+
+    #[test]
+    fn presets_filter_and_clear() {
+        let mut app = App::new(crate::config::Config::default());
+        app.apply_snapshot(synthetic_snapshot_like());
+
+        app.apply_preset(3); // state=established
+        assert!(app.filter.is_some());
+        assert!(app.visible.iter().all(|r| r.is_established()));
+
+        app.apply_preset(2); // proto=udp
+        assert!(app.visible.iter().all(|r| r.protocol == Protocol::Udp));
+
+        app.apply_preset(8); // clear
+        assert!(app.filter.is_none());
+        assert_eq!(app.visible.len(), 2);
+    }
+
+    #[test]
+    fn filter_history_navigates() {
+        let mut app = App::new(crate::config::Config::default());
+        app.filter_input.value = "proto=tcp".into();
+        app.apply_filter_input();
+        app.filter_input.value = "pid>1".into();
+        app.apply_filter_input();
+
+        app.filter_history_prev();
+        assert_eq!(app.filter_input.value, "pid>1");
+        app.filter_history_prev();
+        assert_eq!(app.filter_input.value, "proto=tcp");
+        app.filter_history_next();
+        assert_eq!(app.filter_input.value, "pid>1");
+        app.filter_history_next();
+        assert!(app.filter_input.value.is_empty());
+    }
+
+    #[test]
+    fn sort_editor_operations() {
+        let mut app = App::new(crate::config::Config::default());
+        app.apply_snapshot(synthetic_snapshot_like());
+
+        app.sort_toggle_column(ColumnId::Pid); // append
+        assert!(app.sort.iter().any(|k| k.col == ColumnId::Pid));
+        app.sort_toggle_column(ColumnId::Pid); // flip direction
+        assert!(app.sort.iter().any(|k| k.col == ColumnId::Pid && k.desc));
+
+        app.sort_move_column(ColumnId::Pid, -1);
+        assert_ne!(app.sort.first().map(|k| k.col), Some(ColumnId::Pid));
+
+        app.sort_remove_column(ColumnId::Pid);
+        assert!(!app.sort.iter().any(|k| k.col == ColumnId::Pid));
+
+        app.sort_reset_default();
+        assert_eq!(app.sort, default_sort_chain());
+    }
+
+    /// Two-row snapshot with distinct protocols/states shared by the
+    /// stateful tests above.
+    fn synthetic_snapshot_like() -> Snapshot {
+        Snapshot {
+            taken_at: Local::now(),
+            rows: vec![
+                ConnectionRow::new(
+                    Protocol::Tcp,
+                    v4(127, 0, 0, 1),
+                    5001,
+                    Some(v4(93, 184, 216, 34)),
+                    Some(443),
+                    Some(netstat2::TcpState::Established),
+                    42,
+                ),
+                ConnectionRow::new(Protocol::Udp, v4(0, 0, 0, 0), 5353, None, None, None, 7),
+            ],
+            processes: HashMap::new(),
+            services: HashMap::new(),
         }
     }
 }

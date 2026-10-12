@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{ColumnId, DEFAULT_COLUMN_ORDER};
 
+/// One persisted sort key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SortKeySerde {
+    pub col: String,
+    pub desc: bool,
+}
+
 /// Partial TOML files fall back to `Default` per missing field.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -19,6 +26,8 @@ pub struct ViewConfig {
     pub show_unconnected: bool,
     pub show_loopback: bool,
     pub theme: String,
+    /// Sort key chain, primary first; empty falls back to the built-in chain.
+    pub sort: Vec<SortKeySerde>,
 }
 
 impl Default for ViewConfig {
@@ -31,8 +40,26 @@ impl Default for ViewConfig {
             show_unconnected: true,
             show_loopback: true,
             theme: "dark".to_string(),
+            sort: default_sort_serde(),
         }
     }
+}
+
+fn default_sort_serde() -> Vec<SortKeySerde> {
+    vec![
+        SortKeySerde {
+            col: "process".into(),
+            desc: false,
+        },
+        SortKeySerde {
+            col: "protocol".into(),
+            desc: false,
+        },
+        SortKeySerde {
+            col: "local_port".into(),
+            desc: false,
+        },
+    ]
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -163,6 +190,16 @@ mod tests {
         let mut cfg = Config::default();
         cfg.view.refresh_interval_ms = 2500;
         cfg.view.theme = "light".into();
+        cfg.view.sort = vec![
+            SortKeySerde {
+                col: "pid".into(),
+                desc: true,
+            },
+            SortKeySerde {
+                col: "process".into(),
+                desc: false,
+            },
+        ];
         cfg.columns.order = vec!["pid".into(), "process".into()];
         cfg.columns.hidden = vec!["service".into()];
         cfg.columns.width.insert("process".into(), 24);
@@ -172,6 +209,10 @@ mod tests {
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.view.refresh_interval_ms, 2500);
         assert_eq!(back.view.theme, "light");
+        assert_eq!(back.view.sort.len(), 2);
+        assert_eq!(back.view.sort[0].col, "pid");
+        assert!(back.view.sort[0].desc);
+        assert!(!back.view.sort[1].desc);
         assert_eq!(back.columns.hidden, vec!["service".to_string()]);
         assert_eq!(back.columns.width.get("process"), Some(&24));
         assert!(!back.estats.enabled);

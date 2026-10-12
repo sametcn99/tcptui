@@ -35,14 +35,36 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 - Dark and light color themes
 
 **Navigation and analysis**
-- Incremental filter (`/`) with plain text or regular expressions (`re:` prefix)
+- Incremental filter (`/`) with live match count and inline error reporting while typing
+- Filter history recall (Up/Down in the filter prompt)
+- Quick filter presets on keys `1`–`8`: TCP, UDP, established, listening, loopback, non-loopback, new endpoints, clear
 - Search (`Ctrl+F`) with match jumping (`n` / `N`)
-- Multi-column sorting (`s`, `S`, mouse header clicks; Shift+click adds a sort key)
+- Multi-key sorting with a dedicated sort order editor (`o`); `s` cycles the primary column, `S` reverses, mouse header clicks sort (Shift+click adds a key); the chain persists in the config
 - Grouped tree view by process (`G`), expand/collapse groups
 - Watch mode to follow a single process (`F6`)
 - Show/hide TCP, UDP, unconnected endpoints (`U`) and loopback (`L`)
 - Column setup: visibility, order, widths (`C`), persisted across runs
 - Timestamped event log of opened/closed connections and user actions (`g`)
+
+**Filter language** — beyond free text, filters accept field expressions:
+
+```
+process=chrome            exact match (case-insensitive; * and ? wildcards)
+process:chrome            substring contains
+process~=^chrome          regex (=~ or ~=; !~ negates)
+state=established         TCP state; prefix matching (state=close matches CLOSE_WAIT)
+pid>1000 pid<=9999        numeric comparisons
+tx>10MB rx<1GB            byte units (kb/mb/gb) for the EStats counters
+laddr=192.168.*           wildcard address filters; addr matches either side
+port=443                  either local or remote port
+loopback=true             boolean fields (loopback, connected)
+change=new                change marker (new/changed/deleted/unchanged)
+a and (b or not c)        boolean logic with parentheses; && || ! also work
+service="google chrome"   quoted strings allow spaces
+chrome 127.0.0.1:443      bare text still searches every field
+```
+
+Fields: `process path pid proto state laddr raddr addr lport rport port service tx rx change loopback connected`. Unknown fields produce a readable error listing the valid names.
 
 **Actions**
 - Close Connection (`c`) — terminates ESTABLISHED connections via `SetTcpEntry`, the same API TCPView uses; supports batch closing of marked rows

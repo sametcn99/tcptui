@@ -16,8 +16,13 @@ OPTIONS:
         --interval <MS>     Snapshot refresh interval in milliseconds
                             (250..=60000, default 1000)
         --no-resolve        Start with hostname resolution disabled
-        --filter <TEXT>     Apply a filter expression at startup; prefix
-                            with `re:` to treat as a regular expression
+        --filter <TEXT>     Apply a filter at startup. Supports plain text,
+                            're:' regex prefix, or field expressions such as
+                            'process=chrome and state=established' (fields:
+                            process path pid proto state laddr raddr addr
+                            lport rport port service tx rx change loopback
+                            connected; operators = != > >= < <= : =~ with
+                            and/or/not and parentheses)
         --tcp               Show TCP endpoints only
         --udp               Show UDP endpoints only
         --theme <NAME>      Color theme: dark (default) or light
@@ -25,9 +30,9 @@ OPTIONS:
     -V, --version           Print version
 
 KEYS (inside the TUI):
-    ?  help    /  filter    Ctrl+F search    s  sort    r  resolve addresses
-    t  TCP     u  UDP       c  close connection    k  end process
-    w  whois   e  export    F5 refresh       F6 watch process
+    ?  help    /  filter    1-8 presets    o  sort order    Ctrl+F search
+    c  close connection    K  end process    w  whois    e  export
+    F5 refresh    F6 watch process    r  resolve addresses
 ";
 
 #[derive(Clone, Debug, Default, PartialEq)]

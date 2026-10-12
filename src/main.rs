@@ -82,7 +82,11 @@ fn run() -> Result<()> {
     let result = run_tui(&mut terminal, &mut app);
 
     if enhanced {
-        execute!(io::stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture)?;
+        execute!(
+            io::stdout(),
+            PopKeyboardEnhancementFlags,
+            DisableMouseCapture
+        )?;
     } else {
         execute!(io::stdout(), DisableMouseCapture)?;
     }

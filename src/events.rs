@@ -46,6 +46,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
             app.help_scroll = scroll;
         }
         Mode::ColumnSetup => column_setup_key(app, code),
+        Mode::SortSetup => sort_setup_key(app, code),
         Mode::Export => export_key(app, code),
         Mode::Stats | Mode::Log => stats_log_key(app, code),
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
@@ -85,6 +86,14 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
         KeyCode::Char('/') => {
             app.mode = Mode::Filtering;
             app.filter_input.clear();
+            app.filter_history_idx = None;
+        }
+        KeyCode::Char('o') => {
+            app.mode = Mode::SortSetup;
+            app.sort_cursor = 0;
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+            app.apply_preset(c as u8 - b'0');
         }
         KeyCode::Char('n') => app.search_next(true),
         KeyCode::Char('N') => app.search_next(false),
@@ -177,6 +186,8 @@ fn filter_mode_key(app: &mut App, code: KeyCode, ctrl: bool) {
             app.filter_input.clear();
             app.mode = Mode::Normal;
         }
+        KeyCode::Up => app.filter_history_prev(),
+        KeyCode::Down => app.filter_history_next(),
         KeyCode::Backspace => app.filter_input.backspace(),
         KeyCode::Char('u') if ctrl => app.filter_input.clear(),
         KeyCode::Char('c') if ctrl => app.filter_input.clear(),
@@ -287,6 +298,46 @@ fn adjust_width(app: &mut App, delta: i16) {
         let current = *app.column_width.get(&col).unwrap_or(&col.default_width()) as i16;
         let next = (current + delta).clamp(3, 80) as u16;
         app.column_width.insert(col, next);
+    }
+}
+
+/// Key handling for the multi-key sort order editor (`o`).
+fn sort_setup_key(app: &mut App, code: KeyCode) {
+    let len = app.sortable_columns().len();
+    let col_under = |app: &App| app.sortable_columns().get(app.sort_cursor).copied();
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.mode = Mode::Normal;
+            app.save_config();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.sort_cursor = app.sort_cursor.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.sort_cursor = (app.sort_cursor + 1).min(len.saturating_sub(1));
+        }
+        KeyCode::Char(' ') => {
+            if let Some(col) = col_under(app) {
+                app.sort_toggle_column(col);
+            }
+        }
+        KeyCode::Char('x') | KeyCode::Delete => {
+            if let Some(col) = col_under(app) {
+                app.sort_remove_column(col);
+            }
+        }
+        KeyCode::Char('<') | KeyCode::Char('{') => {
+            if let Some(col) = col_under(app) {
+                app.sort_move_column(col, -1);
+            }
+        }
+        KeyCode::Char('>') | KeyCode::Char('}') => {
+            if let Some(col) = col_under(app) {
+                app.sort_move_column(col, 1);
+            }
+        }
+        KeyCode::Char('r') => app.sort_reset_default(),
+        _ => {}
     }
 }
 

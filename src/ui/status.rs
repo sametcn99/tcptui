@@ -108,7 +108,7 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(app.theme.changed),
         )),
         None => Line::from(Span::styled(
-            " ?:help  /:filter  Ctrl+F:search  s:sort  c:close  K:kill  w:whois  e:export  F5:refresh  q:quit",
+            " ?:help  /:filter  1-8:presets  o:sort  Ctrl+F:search  c:close  K:kill  e:export  q:quit",
             Style::default().fg(app.theme.dim),
         )),
     };

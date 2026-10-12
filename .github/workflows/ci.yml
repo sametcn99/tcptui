@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --all
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - name: Smoke test tcpvcon
+        run: |
+          ./target/release/tcpvcon.exe --version
+          ./target/release/tcpvcon.exe -a -n
+          ./target/release/tcpvcon.exe -a -c -n
+          ./target/release/tcptui.exe --version
+          ./target/release/tcptui.exe --help
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcptui-windows
+          path: |
+            target/release/tcptui.exe
+            target/release/tcpvcon.exe

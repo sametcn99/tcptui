@@ -62,7 +62,11 @@ fn default_sort_serde() -> Vec<SortKeySerde> {
     ]
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Columns that stay hidden until the user enables them: they would not
+/// fit a 120-column terminal next to the core endpoint columns.
+const DEFAULT_HIDDEN_COLUMNS: &[&str] = &["service", "path", "tx", "rx", "country"];
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ColumnsSerde {
     /// Column keys in display order; missing columns are appended.
@@ -71,6 +75,19 @@ pub struct ColumnsSerde {
     pub hidden: Vec<String>,
     /// Per-column desired character width.
     pub width: HashMap<String, u16>,
+}
+
+impl Default for ColumnsSerde {
+    fn default() -> Self {
+        Self {
+            order: Vec::new(),
+            hidden: DEFAULT_HIDDEN_COLUMNS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            width: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -231,7 +248,11 @@ mod tests {
         let mut cfg = Config::default();
         let (order, hidden, width) = cfg.column_layout();
         assert_eq!(order.len(), DEFAULT_COLUMN_ORDER.len());
-        assert!(hidden.is_empty());
+        // The wide optional columns ship hidden by default.
+        assert!(hidden.contains(&ColumnId::Service));
+        assert!(hidden.contains(&ColumnId::Path));
+        assert!(hidden.contains(&ColumnId::Country));
+        assert!(!hidden.contains(&ColumnId::Process));
         assert!(width.is_empty());
 
         let mut hidden2 = std::collections::HashSet::new();

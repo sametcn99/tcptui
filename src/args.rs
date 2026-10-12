@@ -25,7 +25,8 @@ OPTIONS:
                             and/or/not and parentheses)
         --tcp               Show TCP endpoints only
         --udp               Show UDP endpoints only
-        --theme <NAME>      Color theme: dark (default) or light
+        --theme <NAME>      Color theme: dark (default), light, gruvbox,
+                            nord, solarized-dark, solarized-light
     -h, --help              Print this help
     -V, --version           Print version
 
@@ -115,6 +116,14 @@ pub fn parse(args: &[String]) -> Result<(CliOpts, ParseOutcome), String> {
     }
     if opts.tcp_only && opts.udp_only {
         return Err("--tcp and --udp cannot be combined".to_string());
+    }
+    if let Some(theme) = &opts.theme
+        && !crate::app::THEMES.contains(&theme.as_str())
+    {
+        return Err(format!(
+            "unknown theme '{theme}'. Valid themes: {}",
+            crate::app::THEMES.join(", ")
+        ));
     }
 
     let outcome = if opts.help {

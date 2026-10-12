@@ -61,6 +61,9 @@ pub struct ConnectionRow {
     pub tx_bytes: Option<u64>,
     pub rx_bytes: Option<u64>,
     pub change: RowChange,
+    /// When this endpoint was first observed by tcptui (set on the first
+    /// snapshot that reports it). `None` only until the first merge.
+    pub first_seen: Option<chrono::DateTime<chrono::Local>>,
 }
 
 impl ConnectionRow {
@@ -97,6 +100,7 @@ impl ConnectionRow {
             tx_bytes: None,
             rx_bytes: None,
             change: RowChange::New,
+            first_seen: None,
         }
     }
 
@@ -222,16 +226,20 @@ pub fn merge_snapshots(prev: &[ConnectionRow], next: Vec<ConnectionRow>) -> Vec<
     let mut merged: Vec<ConnectionRow> = Vec::with_capacity(next.len() + 8);
     for mut row in next {
         next_ids.insert(row.id.clone(), ());
-        row.change = match prev_map.get(&row.id) {
-            None => RowChange::New,
+        match prev_map.get(&row.id) {
+            None => {
+                row.change = RowChange::New;
+                row.first_seen = Some(chrono::Local::now());
+            }
             Some(old) => {
-                if old.state != row.state || old.remote_port != row.remote_port {
+                row.change = if old.state != row.state || old.remote_port != row.remote_port {
                     RowChange::Changed
                 } else {
                     RowChange::Unchanged
-                }
+                };
+                row.first_seen = old.first_seen;
             }
-        };
+        }
         merged.push(row);
     }
 
@@ -265,6 +273,35 @@ pub fn format_bytes(bytes: u64) -> String {
 /// Local IPv4 "any" address used by listening sockets.
 pub fn is_ipv4_any(ip: &IpAddr) -> bool {
     matches!(ip, IpAddr::V4(v4) if *v4 == Ipv4Addr::UNSPECIFIED)
+}
+
+/// Seconds since `first_seen` (0 when unknown).
+pub fn age_seconds(first_seen: Option<chrono::DateTime<chrono::Local>>) -> u64 {
+    first_seen
+        .map(|t| {
+            chrono::Local::now()
+                .signed_duration_since(t)
+                .num_seconds()
+                .max(0) as u64
+        })
+        .unwrap_or(0)
+}
+
+/// Humanized age: `45s`, `3m`, `2h`, `1d`; `-` when unknown.
+pub fn age_string(first_seen: Option<chrono::DateTime<chrono::Local>>) -> String {
+    let secs = age_seconds(first_seen);
+    if secs == 0 && first_seen.is_none() {
+        return "-".to_string();
+    }
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m{}s", secs / 60, secs % 60)
+    } else if secs < 86400 {
+        format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+    } else {
+        format!("{}d{}h", secs / 86400, (secs % 86400) / 3600)
+    }
 }
 
 #[cfg(test)]
@@ -385,5 +422,47 @@ mod tests {
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(2048), "2.0 KB");
         assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MB");
+    }
+
+    #[test]
+    fn first_seen_is_set_on_new_and_carried_over() {
+        let a = row(
+            Protocol::Tcp,
+            100,
+            Some(443),
+            Some(netstat2::TcpState::Established),
+        );
+        let first = merge_snapshots(&[], vec![a.clone()]);
+        assert!(first[0].first_seen.is_some());
+
+        // Still present -> carried over, identical timestamp.
+        let second = merge_snapshots(&first, vec![a.clone()]);
+        assert_eq!(second[0].first_seen, first[0].first_seen);
+
+        // Disappears -> ghost keeps its timestamp; comes back -> brand new.
+        let third = merge_snapshots(&second, vec![]);
+        assert!(third[0].change == RowChange::Deleted);
+        assert_eq!(third[0].first_seen, first[0].first_seen);
+        let fourth = merge_snapshots(&third, vec![a]);
+        assert_eq!(fourth[0].change, RowChange::New);
+        assert!(fourth[0].first_seen.unwrap() > first[0].first_seen.unwrap());
+    }
+
+    #[test]
+    fn age_string_humanizes() {
+        assert_eq!(age_string(None), "-");
+        assert_eq!(age_string(Some(chrono::Local::now())), "0s");
+        assert_eq!(
+            age_string(Some(chrono::Local::now() - chrono::Duration::seconds(45))),
+            "45s"
+        );
+        assert_eq!(
+            age_string(Some(chrono::Local::now() - chrono::Duration::seconds(125))),
+            "2m5s"
+        );
+        assert_eq!(
+            age_string(Some(chrono::Local::now() - chrono::Duration::seconds(7300))),
+            "2h1m"
+        );
     }
 }

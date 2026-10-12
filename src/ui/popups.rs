@@ -389,6 +389,39 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
     for (name, count) in top.iter().take(10) {
         lines.push(Line::from(format!("{count:>4}  {name}")));
     }
+
+    // Top talkers by transferred bytes (EStats); hidden when unavailable.
+    let mut traffic: std::collections::HashMap<String, (u64, u64)> = Default::default();
+    for r in &app.visible {
+        if let (Some(tx), Some(rx)) = (r.tx_bytes, r.rx_bytes) {
+            let e = traffic.entry(r.process_display()).or_default();
+            e.0 += tx;
+            e.1 += rx;
+        }
+    }
+    let mut talkers: Vec<(String, u64, u64)> = traffic
+        .into_iter()
+        .map(|(name, (tx, rx))| (name, tx, rx))
+        .collect();
+    talkers.sort_by_key(|(_, tx, rx)| std::cmp::Reverse(tx + rx));
+    if !talkers.is_empty() && talkers.iter().any(|(_, tx, rx)| tx + rx > 0) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Top processes by traffic",
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for (name, tx, rx) in talkers.iter().take(10) {
+            lines.push(Line::from(format!(
+                "↑{:<9} ↓{:<9} {}",
+                crate::model::format_bytes(*tx),
+                crate::model::format_bytes(*rx),
+                name
+            )));
+        }
+    }
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "Esc/i: close",

@@ -38,6 +38,8 @@ pub enum ColumnId {
     Path,
     Tx,
     Rx,
+    Age,
+    Country,
 }
 
 pub const DEFAULT_COLUMN_ORDER: &[ColumnId] = &[
@@ -54,6 +56,8 @@ pub const DEFAULT_COLUMN_ORDER: &[ColumnId] = &[
     ColumnId::Path,
     ColumnId::Tx,
     ColumnId::Rx,
+    ColumnId::Age,
+    ColumnId::Country,
 ];
 
 impl ColumnId {
@@ -72,6 +76,8 @@ impl ColumnId {
             ColumnId::Path => "path",
             ColumnId::Tx => "tx",
             ColumnId::Rx => "rx",
+            ColumnId::Age => "age",
+            ColumnId::Country => "country",
         }
     }
 
@@ -97,6 +103,8 @@ impl ColumnId {
             ColumnId::Path => "Process Path",
             ColumnId::Tx => "Tx",
             ColumnId::Rx => "Rx",
+            ColumnId::Age => "Age",
+            ColumnId::Country => "Country",
         }
     }
 
@@ -115,6 +123,8 @@ impl ColumnId {
             ColumnId::Path => 30,
             ColumnId::Tx => 9,
             ColumnId::Rx => 9,
+            ColumnId::Age => 7,
+            ColumnId::Country => 12,
         }
     }
 }
@@ -161,6 +171,7 @@ pub fn cell_sort_value(row: &ConnectionRow, col: ColumnId) -> SortValue {
         ColumnId::RemotePort => SortValue::Num(row.remote_port.unwrap_or(0) as u64),
         ColumnId::Tx => SortValue::Num(row.tx_bytes.unwrap_or(0)),
         ColumnId::Rx => SortValue::Num(row.rx_bytes.unwrap_or(0)),
+        ColumnId::Age => SortValue::Num(crate::model::age_seconds(row.first_seen)),
         ColumnId::Mark => SortValue::Num(0),
         other => SortValue::Text(cell_text(row, other, &DisplayCtx::default())),
     }
@@ -297,6 +308,9 @@ pub fn cell_text(row: &ConnectionRow, col: ColumnId, ctx: &DisplayCtx) -> String
             .unwrap_or_default(),
         ColumnId::Tx => row.tx_bytes.map(format_bytes).unwrap_or_default(),
         ColumnId::Rx => row.rx_bytes.map(format_bytes).unwrap_or_default(),
+        ColumnId::Age => crate::model::age_string(row.first_seen),
+        // Filled by the optional GeoIP resolver (Phase C); empty without it.
+        ColumnId::Country => String::new(),
     }
 }
 
@@ -374,9 +388,20 @@ pub struct Theme {
     pub popup_border: Color,
 }
 
+/// Built-in themes selectable via `--theme`, config or the settings popup.
+pub const THEMES: &[&str] = &[
+    "dark",
+    "light",
+    "gruvbox",
+    "nord",
+    "solarized-dark",
+    "solarized-light",
+];
+
 pub fn theme_by_name(name: &str) -> Theme {
-    if name.eq_ignore_ascii_case("light") {
-        Theme {
+    let name = name.to_ascii_lowercase();
+    match name.as_str() {
+        "light" => Theme {
             normal: Color::Black,
             dim: Color::Rgb(110, 110, 110),
             header: Color::Black,
@@ -389,9 +414,51 @@ pub fn theme_by_name(name: &str) -> Theme {
             bar: Color::Blue,
             accent: Color::Blue,
             popup_border: Color::DarkGray,
-        }
-    } else {
-        Theme {
+        },
+        "gruvbox" => Theme {
+            normal: Color::Rgb(235, 219, 178), // fg2 creamy
+            dim: Color::Rgb(146, 131, 116),    // gray
+            header: Color::Rgb(184, 187, 38),  // green
+            new: Color::Rgb(152, 151, 26),     // green darker
+            deleted: Color::Rgb(204, 36, 29),  // red
+            changed: Color::Rgb(215, 153, 33), // yellow
+            selected_fg: Color::Rgb(40, 40, 40),
+            selected_bg: Color::Rgb(250, 189, 47), // yellow bright
+            marked: Color::Rgb(211, 134, 155),     // purple
+            bar: Color::Rgb(69, 133, 136),         // blue
+            accent: Color::Rgb(142, 192, 124),     // aqua
+            popup_border: Color::Rgb(80, 73, 69),  // bg2
+        },
+        "nord" => Theme {
+            normal: Color::Rgb(216, 222, 233),  // snow storm
+            dim: Color::Rgb(143, 152, 168),     // frost dark
+            header: Color::Rgb(136, 192, 208),  // frost
+            new: Color::Rgb(163, 190, 140),     // green
+            deleted: Color::Rgb(191, 97, 106),  // red
+            changed: Color::Rgb(235, 203, 139), // yellow
+            selected_fg: Color::Rgb(46, 52, 64),
+            selected_bg: Color::Rgb(129, 161, 193), // frost blue
+            marked: Color::Rgb(180, 142, 173),      // purple
+            bar: Color::Rgb(94, 129, 172),          // blue
+            accent: Color::Rgb(136, 192, 208),
+            popup_border: Color::Rgb(76, 86, 106), // polar night
+        },
+        "solarized-light" => Theme {
+            normal: Color::Rgb(101, 123, 131), // base00
+            dim: Color::Rgb(147, 161, 161),    // base1
+            header: Color::Rgb(38, 139, 210),  // blue
+            new: Color::Rgb(133, 153, 0),      // green
+            deleted: Color::Rgb(220, 50, 47),  // red
+            changed: Color::Rgb(181, 137, 0),  // yellow
+            selected_fg: Color::Rgb(253, 246, 227),
+            selected_bg: Color::Rgb(38, 139, 210),
+            marked: Color::Rgb(108, 113, 196), // violet
+            bar: Color::Rgb(147, 161, 161),
+            accent: Color::Rgb(42, 161, 152), // cyan
+            popup_border: Color::Rgb(88, 110, 117),
+        },
+        // "dark" and anything unknown
+        _ => Theme {
             normal: Color::Gray,
             dim: Color::Rgb(130, 130, 130),
             header: Color::Cyan,
@@ -404,7 +471,7 @@ pub fn theme_by_name(name: &str) -> Theme {
             bar: Color::Blue,
             accent: Color::Cyan,
             popup_border: Color::DarkGray,
-        }
+        },
     }
 }
 
@@ -426,6 +493,11 @@ pub enum Mode {
     Export,
     Stats,
     Log,
+    Chart,
+    Rules,
+    Profiles,
+    Settings,
+    Vt,
 }
 
 /// Editable single-line text input (filter/search/...).
@@ -633,6 +705,8 @@ pub struct App {
     pub selected: usize,
     pub offset: usize,
     pub marked: HashSet<RowId>,
+    /// Anchor for Shift+arrow range marking.
+    pub select_anchor: usize,
     pub watch_pid: Option<u32>,
     pub grouped: bool,
     pub expanded: HashSet<u32>,
@@ -739,6 +813,7 @@ impl App {
             selected: 0,
             offset: 0,
             marked: HashSet::new(),
+            select_anchor: 0,
             watch_pid: None,
             grouped: false,
             expanded: HashSet::new(),
@@ -978,6 +1053,29 @@ impl App {
         let current = self.selected as i64;
         let next = (current + delta).clamp(0, len - 1);
         self.selected = next as usize;
+        // Plain navigation resets the range-selection anchor.
+        self.select_anchor = self.selected;
+    }
+
+    /// Extend the mark from the anchor to the (moved) cursor: Shift+arrows.
+    pub fn range_select(&mut self, delta: i64) {
+        if self.display.is_empty() {
+            return;
+        }
+        let len = self.display.len() as i64;
+        let next = (self.selected as i64 + delta).clamp(0, len - 1) as usize;
+        self.selected = next;
+        let (lo, hi) = (
+            self.select_anchor.min(self.selected),
+            self.select_anchor.max(self.selected),
+        );
+        for idx in lo..=hi {
+            if let Some(DisplayNode::Conn(vi)) = self.display.get(idx)
+                && let Some(row) = self.visible.get(*vi)
+            {
+                self.marked.insert(row.id.clone());
+            }
+        }
     }
 
     pub fn page_move(&mut self, up: bool, page: usize) {

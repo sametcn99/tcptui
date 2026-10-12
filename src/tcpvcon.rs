@@ -1,9 +1,10 @@
 //! tcpvcon — the command-line companion of tcptui, mirroring the tool
 //! that ships with Sysinternals TCPView.
 //!
-//! Usage: tcpvcon [-a] [-c] [-n] [process name or PID]
+//! Usage: tcpvcon [-a] [-c] [-j] [-n] [process name or PID]
 //!   -a  show all endpoints (default: established TCP connections only)
 //!   -c  print output as CSV
+//!   -j  print output as JSON
 //!   -n  do not resolve addresses
 
 use std::collections::HashMap;
@@ -14,10 +15,11 @@ use tcptui::model::{ConnectionRow, ProcessInfo, Protocol};
 use tcptui::proc::ProcTable;
 
 const USAGE: &str = "\
-tcpvcon [-a] [-c] [-n] [process name or PID]
+tcpvcon [-a] [-c] [-j] [-n] [process name or PID]
 
   -a   Show all endpoints (default is to show established TCP connections).
   -c   Print output as CSV.
+  -j   Print output as JSON.
   -n   Don't resolve addresses.
   -h   Print this help.
   -V   Print version.
@@ -28,6 +30,7 @@ to restrict the output to endpoints owned by that process.";
 struct Cli {
     all: bool,
     csv: bool,
+    json: bool,
     resolve: bool,
     filter: Option<String>,
     help: bool,
@@ -38,6 +41,7 @@ fn parse_args(args: &[String]) -> Result<Cli> {
     let mut cli = Cli {
         all: false,
         csv: false,
+        json: false,
         resolve: true,
         filter: None,
         help: false,
@@ -47,6 +51,7 @@ fn parse_args(args: &[String]) -> Result<Cli> {
         match arg.as_str() {
             "-a" => cli.all = true,
             "-c" => cli.csv = true,
+            "-j" | "--json" => cli.json = true,
             "-n" => cli.resolve = false,
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,
@@ -158,7 +163,12 @@ fn run(cli: &Cli) -> Result<()> {
     ];
 
     let mut out = String::new();
-    if cli.csv {
+    if cli.json {
+        let header_vec: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
+        let all_rows: Vec<Vec<String>> =
+            rows.iter().map(|r| row_fields(r, &mut addr_text)).collect();
+        out = tcptui::export::render(&header_vec, &all_rows, tcptui::export::ExportFormat::Json)?;
+    } else if cli.csv {
         let mut w = csv::Writer::from_writer(vec![]);
         w.write_record(headers)?;
         for r in &rows {

@@ -133,6 +133,7 @@ fn build_rows(app: &App, ctx: &DisplayCtx<'_>, cols: &[ColumnId]) -> Vec<Row<'st
     let mut rows: Vec<Row> = Vec::with_capacity(64);
     let body_height = app.table_area.height.saturating_sub(2) as usize;
     let end = (app.offset + body_height).min(app.display.len());
+    let search = app.search.as_ref();
 
     for idx in app.offset..end {
         let is_selected = idx == app.selected;
@@ -187,7 +188,12 @@ fn build_rows(app: &App, ctx: &DisplayCtx<'_>, cols: &[ColumnId]) -> Vec<Row<'st
                     if *col == ColumnId::State && row.protocol == Protocol::Udp {
                         text.clear();
                     }
-                    cells.push(Cell::from(truncate(&text, 60)));
+                    let truncated = truncate(&text, 60);
+                    if let Some(line) = highlight_search(&truncated, search, &app.theme) {
+                        cells.push(Cell::from(line));
+                    } else {
+                        cells.push(Cell::from(truncated));
+                    }
                 }
                 rows.push(Row::new(cells).style(style));
             }
@@ -203,6 +209,62 @@ fn truncate(s: &str, max: usize) -> String {
         let cut: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
     }
+}
+
+/// Build a highlighted version of `text` for the active search: all matches
+/// get a distinct background. Returns `None` when the search does not match.
+fn highlight_search(
+    text: &str,
+    search: Option<&crate::app::FilterKind>,
+    theme: &crate::app::Theme,
+) -> Option<Line<'static>> {
+    let search = search?;
+    // Byte ranges of every match, at char boundaries.
+    let ranges: Vec<(usize, usize)> = match search {
+        crate::app::FilterKind::Plain(p) => {
+            let needle = p.as_bytes();
+            if needle.is_empty() {
+                return None;
+            }
+            let hay = text.as_bytes();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i + needle.len() <= hay.len() {
+                if hay[i..i + needle.len()].eq_ignore_ascii_case(needle) {
+                    out.push((i, i + needle.len()));
+                    i += needle.len();
+                } else {
+                    i += 1;
+                }
+            }
+            out
+        }
+        crate::app::FilterKind::Regex(re) => {
+            re.find_iter(text).map(|m| (m.start(), m.end())).collect()
+        }
+        crate::app::FilterKind::Expr { .. } => return None,
+    };
+    if ranges.is_empty() {
+        return None;
+    }
+
+    let hl = Style::default()
+        .fg(theme.selected_fg)
+        .bg(theme.changed)
+        .add_modifier(Modifier::BOLD);
+    let mut spans: Vec<Span> = Vec::new();
+    let mut cursor = 0usize;
+    for (start, end) in ranges {
+        if start > cursor {
+            spans.push(Span::raw(text[cursor..start].to_string()));
+        }
+        spans.push(Span::styled(text[start..end].to_string(), hl));
+        cursor = end;
+    }
+    if cursor < text.len() {
+        spans.push(Span::raw(text[cursor..].to_string()));
+    }
+    Some(Line::from(spans))
 }
 
 impl App {

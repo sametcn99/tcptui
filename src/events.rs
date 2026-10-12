@@ -49,7 +49,18 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
         Mode::SortSetup => sort_setup_key(app, code),
         Mode::Export => export_key(app, code),
         Mode::Stats | Mode::Log => stats_log_key(app, code),
+        Mode::Chart | Mode::Rules | Mode::Profiles | Mode::Settings | Mode::Vt => {
+            misc_popup_key(app, code)
+        }
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
+    }
+}
+
+/// Minimal close handling for popups whose full keymaps arrive with their
+/// feature phases.
+fn misc_popup_key(app: &mut App, code: KeyCode) {
+    if matches!(code, KeyCode::Esc | KeyCode::Char('q')) {
+        app.mode = Mode::Normal;
     }
 }
 
@@ -69,6 +80,11 @@ fn normal_mode_key(app: &mut App, code: KeyCode, ctrl: bool, shift: bool, viewpo
             app.mode = Mode::Searching;
             app.search_input.clear();
         }
+        // Shift+arrows extend the mark from the anchor (range selection).
+        (KeyCode::Up, false, true) => app.range_select(-1),
+        (KeyCode::Down, false, true) => app.range_select(1),
+        (KeyCode::PageUp, false, true) => app.range_select(-(page as i64)),
+        (KeyCode::PageDown, false, true) => app.range_select(page as i64),
         (code, _, _) => shared_normal_key(app, code, page),
     }
 }

@@ -14,7 +14,19 @@ use tcptui::app::{App, FilterKind};
 use tcptui::args::{self, ParseOutcome};
 use tcptui::config::Config;
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(e) = run() {
+        // Keep the console window open after a fatal error so that
+        // double-clicked launches can actually show the message.
+        eprintln!("tcptui: {e}");
+        eprintln!();
+        eprintln!("Press Enter to close...");
+        let _ = io::stdin().read_line(&mut String::new());
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let (opts, outcome) = args::parse(&raw).unwrap_or_else(|e| {
         eprintln!("tcptui: {e}");
@@ -52,27 +64,35 @@ fn main() -> Result<()> {
         app.apply_filter_input();
     }
 
+    // Kitty keyboard enhancements only exist on modern terminals; the
+    // legacy Windows console rejects them outright.
+    let enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+
     let mut terminal = init();
-    execute!(
-        io::stdout(),
-        EnableMouseCapture,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-    )?;
+    if enhanced {
+        execute!(
+            io::stdout(),
+            EnableMouseCapture,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+    } else {
+        execute!(io::stdout(), EnableMouseCapture)?;
+    }
 
-    let result = run(&mut terminal, &mut app);
+    let result = run_tui(&mut terminal, &mut app);
 
-    execute!(
-        io::stdout(),
-        PopKeyboardEnhancementFlags,
-        DisableMouseCapture
-    )?;
+    if enhanced {
+        execute!(io::stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture)?;
+    } else {
+        execute!(io::stdout(), DisableMouseCapture)?;
+    }
     restore();
     app.save_config();
 
     result
 }
 
-fn run(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+fn run_tui(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     loop {
         app.poll_channels();
         terminal.draw(|f| tcptui::ui::draw(f, app))?;

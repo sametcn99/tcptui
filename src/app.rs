@@ -806,6 +806,17 @@ pub struct App {
     pub bw_view: BwView,
     pub expanded: HashSet<u32>,
 
+    // Phase C: geoip, profiles, settings
+    /// Optional GeoIP resolver; `None` when the feature is off, disabled in
+    /// config or the database file is missing.
+    pub geo: Option<std::sync::Mutex<crate::geoip::GeoResolver>>,
+    pub geoip_enabled: bool,
+    /// Named view profiles (persisted verbatim).
+    pub profiles: Vec<crate::config::ProfileSerde>,
+    pub profile_cursor: usize,
+    pub profile_input: Option<InputLine>,
+    pub settings_cursor: usize,
+
     // Columns
     pub column_order: Vec<ColumnId>,
     pub column_hidden: HashSet<ColumnId>,
@@ -862,7 +873,6 @@ impl App {
         let interval = Duration::from_millis(config.view.refresh_interval_ms.clamp(250, 60000));
         spawn_collector(collector_rx_cmd, msg_tx, interval, config.estats.enabled);
 
-        let (column_order, column_hidden, column_width) = config.column_layout();
         let theme_name = config.view.theme.clone();
 
         // Sort order from config; fall back to the default chain.
@@ -917,6 +927,21 @@ impl App {
             })
             .collect();
 
+        // GeoIP resolver: only when enabled AND the database opens. Without
+        // it the Country column stays hidden (soft failure).
+        let geo = if config.geoip.enabled {
+            crate::geoip::GeoResolver::open(std::path::Path::new(&config.geoip.path))
+                .ok()
+                .map(std::sync::Mutex::new)
+        } else {
+            None
+        };
+        let geoip_enabled = config.geoip.enabled;
+        let (column_order, mut column_hidden, column_width) = config.column_layout();
+        if geo.is_none() {
+            column_hidden.insert(ColumnId::Country);
+        }
+
         let app = App {
             mode: Mode::Normal,
             should_quit: false,
@@ -964,6 +989,12 @@ impl App {
             bw_selected_id: None,
             bw_view: BwView::Total,
             expanded: HashSet::new(),
+            geo,
+            geoip_enabled,
+            profiles: config.profiles.clone(),
+            profile_cursor: 0,
+            profile_input: None,
+            settings_cursor: 0,
             column_order,
             column_hidden,
             column_width,
@@ -1829,6 +1860,198 @@ impl App {
         });
     }
 
+    // -- GeoIP -------------------------------------------------------------
+
+    /// Country cell text ("TR 🇹🇷") for a row's remote address.
+    pub fn country_for(&self, row: &ConnectionRow) -> String {
+        let Some(ip) = row.remote_addr else {
+            return String::new();
+        };
+        let Some(geo) = &self.geo else {
+            return String::new();
+        };
+        let code = geo.lock().ok().and_then(|mut g| g.country_code(ip));
+        match code {
+            Some(code) => match crate::geoip::flag_emoji(&code) {
+                Some(flag) => format!("{code} {flag}"),
+                None => code,
+            },
+            None => String::new(),
+        }
+    }
+
+    /// Try to enable GeoIP (settings toggle): opens the configured database.
+    pub fn geoip_try_enable(&mut self, path: &str) -> bool {
+        match crate::geoip::GeoResolver::open(std::path::Path::new(path)) {
+            Ok(resolver) => {
+                self.geo = Some(std::sync::Mutex::new(resolver));
+                self.column_hidden.remove(&ColumnId::Country);
+                true
+            }
+            Err(_) => {
+                self.geo = None;
+                self.column_hidden.insert(ColumnId::Country);
+                false
+            }
+        }
+    }
+
+    pub fn geoip_disable(&mut self) {
+        self.geo = None;
+        self.column_hidden.insert(ColumnId::Country);
+    }
+
+    // -- View profiles -------------------------------------------------------
+
+    /// Apply a saved profile by index.
+    pub fn apply_profile(&mut self, idx: usize) {
+        let Some(profile) = self.profiles.get(idx).cloned() else {
+            return;
+        };
+        self.toggles.show_tcp = profile.show_tcp;
+        self.toggles.show_udp = profile.show_udp;
+        self.toggles.show_unconnected = profile.show_unconnected;
+        self.toggles.show_loopback = profile.show_loopback;
+        self.grouped = profile.grouped;
+        self.filter = match &profile.filter {
+            Some(text) => FilterKind::parse(text).ok(),
+            None => None,
+        };
+        let mut sort: Vec<SortKey> = profile
+            .sort
+            .iter()
+            .filter_map(|s| ColumnId::from_key(&s.col).map(|col| SortKey { col, desc: s.desc }))
+            .collect();
+        if sort.is_empty() {
+            sort = default_sort_chain();
+        }
+        self.sort = sort;
+        self.selected = 0;
+        self.refresh_display();
+        self.push_status(format!("Profile applied: {}", profile.name));
+    }
+
+    /// Capture the current view (filter, sort, toggles) as a named profile.
+    pub fn save_current_profile(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("profile name is empty".to_string());
+        }
+        if self.profiles.len() >= 10 {
+            return Err("profile limit reached (10)".to_string());
+        }
+        let profile = crate::config::ProfileSerde {
+            name: name.to_string(),
+            filter: self.filter.as_ref().map(|f| f.describe()),
+            sort: self
+                .sort
+                .iter()
+                .map(|k| crate::config::SortKeySerde {
+                    col: k.col.key().to_string(),
+                    desc: k.desc,
+                })
+                .collect(),
+            show_tcp: self.toggles.show_tcp,
+            show_udp: self.toggles.show_udp,
+            show_unconnected: self.toggles.show_unconnected,
+            show_loopback: self.toggles.show_loopback,
+            grouped: self.grouped,
+        };
+        // Replace an existing profile with the same name.
+        self.profiles.retain(|p| p.name != name);
+        self.profiles.push(profile);
+        Ok(())
+    }
+
+    pub fn delete_profile(&mut self, idx: usize) {
+        if idx < self.profiles.len() {
+            self.profiles.remove(idx);
+            self.profile_cursor = self
+                .profile_cursor
+                .min(self.profiles.len().saturating_sub(1));
+        }
+    }
+
+    // -- Settings screen -----------------------------------------------------
+
+    /// Number of rows in the settings popup.
+    pub fn settings_count(&self) -> usize {
+        10
+    }
+
+    /// Toggle/cycle the setting under the cursor.
+    pub fn settings_activate(&mut self) {
+        match self.settings_cursor {
+            0 => self.step_interval(false),
+            1 => self.toggle_resolve(),
+            2 => {
+                self.toggles.show_tcp = !self.toggles.show_tcp;
+                self.refresh_display();
+            }
+            3 => {
+                self.toggles.show_udp = !self.toggles.show_udp;
+                self.refresh_display();
+            }
+            4 => {
+                self.toggles.show_unconnected = !self.toggles.show_unconnected;
+                self.refresh_display();
+            }
+            5 => {
+                self.toggles.show_loopback = !self.toggles.show_loopback;
+                self.refresh_display();
+            }
+            6 => self.toggle_grouped(),
+            7 => {
+                let current = THEMES
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(&self.theme_name))
+                    .unwrap_or(0);
+                let next = THEMES[(current + 1) % THEMES.len()];
+                self.theme_name = next.to_string();
+                self.theme = theme_by_name(next);
+            }
+            8 => {
+                self.estats_enabled = !self.estats_enabled;
+                let _ = self
+                    .collector_tx
+                    .send(CollectorCmd::SetEstats(self.estats_enabled));
+            }
+            9 => {
+                self.geoip_enabled = !self.geoip_enabled;
+                if self.geoip_enabled {
+                    let path = crate::config::GeoIpConfig::default().path;
+                    if !self.geoip_try_enable(&path) {
+                        self.push_status(format!("GeoIP database not found: {path}"));
+                    }
+                } else {
+                    self.geoip_disable();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Adjust the setting under the cursor (+/-).
+    pub fn settings_adjust(&mut self, plus: bool) {
+        match self.settings_cursor {
+            0 => self.step_interval(!plus),
+            7 => {
+                let current = THEMES
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case(&self.theme_name))
+                    .unwrap_or(0);
+                let next = if plus {
+                    THEMES[(current + 1) % THEMES.len()]
+                } else {
+                    THEMES[(current + THEMES.len() - 1) % THEMES.len()]
+                };
+                self.theme_name = next.to_string();
+                self.theme = theme_by_name(next);
+            }
+            _ => self.settings_activate(),
+        }
+    }
+
     pub fn begin_detail(&mut self) {
         let Some(row) = self.current_row() else {
             return;
@@ -1939,7 +2162,17 @@ impl App {
         };
         let rows: Vec<Vec<String>> = source
             .iter()
-            .map(|r| cols.iter().map(|c| cell_text(r, *c, &ctx)).collect())
+            .map(|r| {
+                cols.iter()
+                    .map(|c| {
+                        if *c == ColumnId::Country {
+                            self.country_for(r)
+                        } else {
+                            cell_text(r, *c, &ctx)
+                        }
+                    })
+                    .collect()
+            })
             .collect();
         (headers, rows)
     }
@@ -2073,6 +2306,8 @@ impl App {
             })
             .collect();
         cfg.estats.enabled = self.estats_enabled;
+        cfg.geoip.enabled = self.geoip_enabled;
+        cfg.profiles = self.profiles.clone();
         cfg.set_column_layout(&self.column_order, &self.column_hidden, &self.column_width);
         cfg.alerts = self
             .alerts
@@ -2475,5 +2710,88 @@ mod phase_b_tests {
         let snap2 = synthetic_snapshot_like();
         app.apply_snapshot(snap2);
         assert_eq!(app.alert_pending.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod phase_c_tests {
+    use super::tests::{synthetic_snapshot_like, v4};
+    use super::*;
+
+    #[test]
+    fn country_cell_without_database_is_blank() {
+        // Default config has no GeoLite2 file around -> soft failure.
+        let mut app = App::new(crate::config::Config::default());
+        app.apply_snapshot(synthetic_snapshot_like());
+        let row = app.rows.first().unwrap().clone();
+        assert!(app.geo.is_none());
+        assert_eq!(app.country_for(&row), "");
+        // The Country column is auto-hidden in that case.
+        assert!(app.column_hidden.contains(&ColumnId::Country));
+    }
+
+    #[test]
+    fn profiles_save_apply_delete() {
+        let mut app = App::new(crate::config::Config::default());
+        app.apply_snapshot(synthetic_snapshot_like());
+
+        // Configure a distinctive view, save it, wreck the view, re-apply.
+        app.filter = Some(FilterKind::parse("proto=udp").unwrap());
+        app.toggles.show_tcp = false;
+        app.grouped = true;
+        app.save_current_profile("UDP only").unwrap();
+        assert_eq!(app.profiles.len(), 1);
+        assert!(app.save_current_profile("  ").is_err());
+
+        app.filter = None;
+        app.toggles.show_tcp = true;
+        app.grouped = false;
+
+        app.apply_profile(0);
+        assert!(app.filter.is_some());
+        assert!(!app.toggles.show_tcp);
+        assert!(app.grouped);
+
+        // Same-name save replaces instead of duplicating.
+        app.toggles.show_tcp = true;
+        app.save_current_profile("UDP only").unwrap();
+        assert_eq!(app.profiles.len(), 1);
+        assert!(app.profiles[0].show_tcp);
+
+        app.delete_profile(0);
+        assert!(app.profiles.is_empty());
+    }
+
+    #[test]
+    fn settings_toggles_flip_state() {
+        let mut app = App::new(crate::config::Config::default());
+        app.apply_snapshot(synthetic_snapshot_like());
+
+        // Cursor 2 == "Show TCP"
+        app.settings_cursor = 2;
+        let before = app.toggles.show_tcp;
+        app.settings_activate();
+        assert_eq!(app.toggles.show_tcp, !before);
+
+        // Cursor 7 == theme cycling
+        app.settings_cursor = 7;
+        let theme_before = app.theme_name.clone();
+        app.settings_activate();
+        assert_ne!(app.theme_name, theme_before);
+
+        // Cursor 9 == GeoIP toggle (no database -> resolver stays None)
+        app.settings_cursor = 9;
+        app.settings_activate();
+        assert!(!app.geoip_enabled);
+        assert!(app.column_hidden.contains(&ColumnId::Country));
+    }
+
+    #[test]
+    fn country_flag_helper() {
+        // Country display shape once a resolver exists: "XX <flag>".
+        let code = "tr".to_ascii_uppercase();
+        let flag = crate::geoip::flag_emoji(&code).unwrap();
+        assert_eq!(format!("{code} {flag}"), "TR \u{1F1F9}\u{1F1F7}");
+        let _ = v4(127, 0, 0, 1);
     }
 }

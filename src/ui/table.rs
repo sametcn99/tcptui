@@ -183,6 +183,11 @@ fn build_rows(app: &App, ctx: &DisplayCtx<'_>, cols: &[ColumnId]) -> Vec<Row<'st
                     if *col == ColumnId::State && row.protocol == Protocol::Udp {
                         text.clear();
                     }
+                    // The Country cell needs the GeoIP resolver, which lives
+                    // behind a mutex on the app, not in the display ctx.
+                    if *col == ColumnId::Country {
+                        text = app.country_for(row);
+                    }
                     let truncated = truncate(&text, 60);
                     if let Some(line) = highlight_search(&truncated, search, &app.theme) {
                         cells.push(Cell::from(line));

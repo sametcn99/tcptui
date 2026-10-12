@@ -51,7 +51,9 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
         Mode::Stats | Mode::Log => stats_log_key(app, code),
         Mode::Chart => chart_key(app, code),
         Mode::Rules => rules_key(app, code),
-        Mode::Profiles | Mode::Settings | Mode::Vt => misc_popup_key(app, code),
+        Mode::Profiles => profiles_key(app, code),
+        Mode::Settings => settings_key(app, code),
+        Mode::Vt => misc_popup_key(app, code),
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
     }
 }
@@ -61,6 +63,68 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
 fn misc_popup_key(app: &mut App, code: KeyCode) {
     if matches!(code, KeyCode::Esc | KeyCode::Char('q')) {
         app.mode = Mode::Normal;
+    }
+}
+
+/// View profiles popup (P): apply, save-current and delete.
+fn profiles_key(app: &mut App, code: KeyCode) {
+    if let Some(input) = app.profile_input.as_mut() {
+        match code {
+            KeyCode::Enter => {
+                let name = input.value.trim().to_string();
+                match app.save_current_profile(&name) {
+                    Ok(()) => app.push_status(format!("Profile saved: {name}")),
+                    Err(e) => app.push_status(e),
+                }
+                app.profile_input = None;
+            }
+            KeyCode::Esc => app.profile_input = None,
+            KeyCode::Backspace => input.backspace(),
+            KeyCode::Char(c) => input.push(c),
+            _ => {}
+        }
+        return;
+    }
+
+    let len = app.profiles.len();
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.mode = Mode::Normal;
+            app.save_config();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.profile_cursor = app.profile_cursor.saturating_sub(1)
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.profile_cursor = (app.profile_cursor + 1).min(len.saturating_sub(1));
+        }
+        KeyCode::Enter => app.apply_profile(app.profile_cursor),
+        KeyCode::Char('s') => {
+            app.profile_input = Some(crate::app::InputLine::default());
+        }
+        KeyCode::Char('x') | KeyCode::Delete => app.delete_profile(app.profile_cursor),
+        _ => {}
+    }
+}
+
+/// Settings popup (M): live-edit view preferences, persisted on close.
+fn settings_key(app: &mut App, code: KeyCode) {
+    let count = app.settings_count();
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.mode = Mode::Normal;
+            app.save_config();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.settings_cursor = app.settings_cursor.saturating_sub(1)
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.settings_cursor = (app.settings_cursor + 1).min(count.saturating_sub(1));
+        }
+        KeyCode::Char(' ') | KeyCode::Enter => app.settings_activate(),
+        KeyCode::Char('+') | KeyCode::Char('=') => app.settings_adjust(true),
+        KeyCode::Char('-') | KeyCode::Char('_') => app.settings_adjust(false),
+        _ => {}
     }
 }
 
@@ -204,6 +268,15 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
             app.mode = Mode::Rules;
             app.rules_cursor = 0;
             app.rules_input = None;
+        }
+        KeyCode::Char('P') => {
+            app.mode = Mode::Profiles;
+            app.profile_cursor = 0;
+            app.profile_input = None;
+        }
+        KeyCode::Char('M') => {
+            app.mode = Mode::Settings;
+            app.settings_cursor = 0;
         }
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             app.apply_preset(c as u8 - b'0');

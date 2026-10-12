@@ -182,5 +182,36 @@ mod tests {
         assert_eq!(app.alerts.len(), 1);
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         press(&mut app, 'q');
+
+        // Profiles popup: save the current view and re-apply it.
+        press(&mut app, 'P');
+        assert_eq!(app.mode, Mode::Profiles);
+        press(&mut app, 's');
+        for c in ['m', 'y', 'v', 'i', 'e', 'w'] {
+            press(&mut app, c);
+        }
+        let enter_again = Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        });
+        handle_event(
+            &mut app,
+            enter_again,
+            ratatui::layout::Rect::new(0, 0, 120, 30),
+        );
+        assert_eq!(app.profiles.len(), 1);
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        press(&mut app, 'q');
+
+        // Settings popup: flip a toggle and render.
+        press(&mut app, 'M');
+        assert_eq!(app.mode, Mode::Settings);
+        press(&mut app, 'j');
+        press(&mut app, 'j');
+        press(&mut app, ' ');
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        press(&mut app, 'q');
     }
 }

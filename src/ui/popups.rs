@@ -44,6 +44,8 @@ pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         Mode::Log => draw_log(f, app, area),
         Mode::Chart => draw_chart(f, app, area),
         Mode::Rules => draw_rules(f, app, area),
+        Mode::Profiles => draw_profiles(f, app, area),
+        Mode::Settings => draw_settings(f, app, area),
         _ => {}
     }
 }
@@ -704,4 +706,116 @@ fn draw_rules(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items).block(popup_block("Rules", app));
     f.render_widget(Clear, rect);
     f.render_widget(list, rect);
+}
+
+/// Named view profiles popup (`P`).
+fn draw_profiles(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered_rect(60, 55, area);
+    let mut items: Vec<ListItem> = Vec::new();
+
+    if app.profiles.is_empty() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "No profiles saved. Press 's' to capture the current view.",
+            Style::default().fg(app.theme.dim),
+        ))));
+    }
+    for (idx, profile) in app.profiles.iter().enumerate() {
+        let style = if idx == app.profile_cursor {
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.normal)
+        };
+        let desc = profile.filter.as_deref().unwrap_or("(no filter)");
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!("{:<16} {}", profile.name, desc),
+            style,
+        ))));
+    }
+
+    items.push(ListItem::new(Line::from("")));
+    if let Some(input) = &app.profile_input {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("name> ", Style::default().fg(app.theme.accent)),
+            Span::raw(input.value.clone()),
+            Span::styled("▏", Style::default().fg(app.theme.dim)),
+        ])));
+        items.push(ListItem::new(Line::from(Span::styled(
+            "(Enter saves the current view under this name, Esc cancels)",
+            Style::default().fg(app.theme.dim),
+        ))));
+    } else {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "Enter:apply  s:save current view  x:delete  Esc:close&save",
+            Style::default().fg(app.theme.changed),
+        ))));
+    }
+
+    let list = List::new(items).block(popup_block("View profiles", app));
+    f.render_widget(Clear, rect);
+    f.render_widget(list, rect);
+}
+
+/// Settings popup (`M`): live-editable view preferences.
+fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered_rect(55, 60, area);
+
+    let geo_state = match (&app.geo, app.geoip_enabled) {
+        (Some(_), _) => "on (database loaded)",
+        (None, true) => "on (database missing)",
+        (None, false) => "off",
+    };
+    let rows: Vec<(&str, String)> = vec![
+        (
+            "Refresh interval",
+            format!("{} ms", app.refresh_interval.as_millis()),
+        ),
+        ("Resolve addresses", on_off(app.toggles.resolve)),
+        ("Show TCP", on_off(app.toggles.show_tcp)),
+        ("Show UDP", on_off(app.toggles.show_udp)),
+        (
+            "Show unconnected endpoints",
+            on_off(app.toggles.show_unconnected),
+        ),
+        ("Show loopback", on_off(app.toggles.show_loopback)),
+        ("Grouped view", on_off(app.grouped)),
+        ("Theme", app.theme_name.clone()),
+        ("EStats byte counters", on_off(app.estats_enabled)),
+        ("GeoIP country column", geo_state.to_string()),
+    ];
+
+    let mut items: Vec<ListItem> = Vec::new();
+    for (idx, (label, value)) in rows.iter().enumerate() {
+        let style = if idx == app.settings_cursor {
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.normal)
+        };
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!("{:<28} {}", label, value),
+            style,
+        ))));
+    }
+    items.push(ListItem::new(Line::from("")));
+    items.push(ListItem::new(Line::from(Span::styled(
+        "Space/Enter:toggle  +/-:adjust  Esc:close&save",
+        Style::default().fg(app.theme.changed),
+    ))));
+
+    let list = List::new(items).block(popup_block("Settings", app));
+    f.render_widget(Clear, rect);
+    f.render_widget(list, rect);
+}
+
+fn on_off(b: bool) -> String {
+    if b {
+        "on".to_string()
+    } else {
+        "off".to_string()
+    }
 }

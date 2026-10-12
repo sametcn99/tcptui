@@ -145,6 +145,54 @@ impl Default for ColorRuleSerde {
     }
 }
 
+/// Optional GeoIP lookups; the database file is provided by the user.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeoIpConfig {
+    pub enabled: bool,
+    /// Path to a GeoLite2-Country .mmdb database (relative to CWD or absolute).
+    pub path: String,
+}
+
+impl Default for GeoIpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: "GeoLite2-Country.mmdb".to_string(),
+        }
+    }
+}
+
+/// A named view: filter + sort chain + visibility toggles, applied as one.
+/// Column layout is deliberately global and not part of profiles.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProfileSerde {
+    pub name: String,
+    pub filter: Option<String>,
+    pub sort: Vec<SortKeySerde>,
+    pub show_tcp: bool,
+    pub show_udp: bool,
+    pub show_unconnected: bool,
+    pub show_loopback: bool,
+    pub grouped: bool,
+}
+
+impl Default for ProfileSerde {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            filter: None,
+            sort: Vec::new(),
+            show_tcp: true,
+            show_udp: true,
+            show_unconnected: true,
+            show_loopback: true,
+            grouped: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -159,6 +207,12 @@ pub struct Config {
     /// Wireshark-style row coloring rules.
     #[serde(default)]
     pub colors: Vec<ColorRuleSerde>,
+    /// Optional GeoIP country resolution.
+    #[serde(default)]
+    pub geoip: GeoIpConfig,
+    /// Named view profiles.
+    #[serde(default)]
+    pub profiles: Vec<ProfileSerde>,
 }
 
 /// `%APPDATA%\tcptui\config.toml`.

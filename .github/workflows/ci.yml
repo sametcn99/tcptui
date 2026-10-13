@@ -53,6 +53,10 @@ jobs:
           ./target/release/tcptui.exe --version
           ./target/release/tcptui.exe --help
 
+      - name: Security audit
+        uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
+
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
@@ -85,12 +89,17 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --all-features
 
+      - name: Generate frame dumps
+        run: |
+          ./target/release/tcptui.exe --dump-frame frame-dark.txt --frame-size 120x30
+          ./target/release/tcptui.exe --dump-frame frame-wide.txt --frame-size 180x40
+
       - name: Package
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
           $zip = "tcptui-$tag-windows-x86_64.zip"
-          Compress-Archive -Path target/release/tcptui.exe, target/release/tcpvcon.exe, README.md, LICENSE -DestinationPath $zip
+          Compress-Archive -Path target/release/tcptui.exe, target/release/tcpvcon.exe, README.md, LICENSE, frame-dark.txt, frame-wide.txt -DestinationPath $zip
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
           "$hash  $zip" | Out-File -Encoding ascii sha256sums.txt
           Write-Output "ZIP=$zip" >> $env:GITHUB_ENV

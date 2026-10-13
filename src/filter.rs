@@ -176,7 +176,24 @@ impl fmt::Display for Expr {
                 };
                 write!(f, "{}{}{}", field_ident(p.field), p.op.symbol(), v)
             }
-            Expr::Any(t) => write!(f, "{t}"),
+            Expr::Any(t) => {
+                let plain = !t.is_empty()
+                    && t.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "_.:*?/-".contains(c));
+                if plain {
+                    write!(f, "{t}")
+                } else {
+                    // Quote and escape so describe() re-parses losslessly.
+                    let escaped: String = t
+                        .chars()
+                        .map(|c| match c {
+                            '\\' | '"' => format!("\\{c}"),
+                            other => other.to_string(),
+                        })
+                        .collect();
+                    write!(f, "\"{escaped}\"")
+                }
+            }
         }
     }
 }
@@ -970,6 +987,40 @@ mod tests {
         assert!(looks_structured("pid=1"));
         assert!(looks_structured("a and b"));
         assert!(looks_structured("tx>1mb"));
+    }
+
+    /// Deterministic pseudo-random expressions (xorshift): the parser must
+    /// never panic, errors must be non-empty, and successful parses must
+    /// survive a describe() -> parse() round trip.
+    #[test]
+    fn fuzz_parse_never_panics_and_round_trips() {
+        let alphabet: Vec<char> = "=<>~!:()|\"' abcdefghmnoprstuwxy019.*/"
+            .chars()
+            .chain(['\u{e9}', '\u{fc}']) // é, ü
+            .collect();
+        let mut state: u64 = 0x9E3779B97F4A7C15;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..2000 {
+            let len = (next() % 28) as usize;
+            let text: String = (0..len)
+                .map(|_| alphabet[(next() % alphabet.len() as u64) as usize])
+                .collect();
+            match parse(&text) {
+                Ok(expr) => {
+                    let described = expr.to_string();
+                    assert!(
+                        parse(&described).is_ok(),
+                        "round trip failed for {text:?} -> {described:?}"
+                    );
+                }
+                Err(e) => assert!(!e.is_empty(), "empty error for {text:?}"),
+            }
+        }
     }
 
     #[test]

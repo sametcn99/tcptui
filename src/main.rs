@@ -58,6 +58,21 @@ fn run() -> Result<()> {
 
     tcptui::net::ensure_wsa()?;
 
+    // One-shot text render of a live frame (--dump-frame): no TUI.
+    if let Some(file) = &opts.dump_frame {
+        let (w, h) = opts.frame_size.unwrap_or((120, 30));
+        match tcptui::app::dump_frame(std::path::Path::new(file), w, h, config) {
+            Ok(()) => {
+                println!("wrote {file} ({w}x{h})");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("tcptui: dump-frame failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Experimental ETW mode: opt-in, elevated terminals only, falls back
     // to plain polling on any failure.
     let mut etw_error: Option<String> = None;

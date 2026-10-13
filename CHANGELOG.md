@@ -3,6 +3,29 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-10-13
+
+### Added
+- `--dump-frame <FILE> [--frame-size WxH]`: render one live frame as text
+  without a terminal (screenshots, golden files); release zips include
+  generated 120x30 and 180x40 frame dumps.
+- Command palette (`Ctrl+P`): fuzzy search over 22 commands with
+  Up/Down/Enter navigation.
+- Smart copy: `Ctrl+C` copies a TSV of all marked rows when any are
+  marked, otherwise the selected row; JSON row copy via the context menu.
+- Profile export/import (`P` popup, `e`/`i`): `[[profile]]` TOML files
+  merged by name.
+- Process details now include a system-traffic sparkline (last two
+  minutes, unicode blocks).
+
+### Fixed
+- Filter `describe()` output now quotes free-text terms containing
+  operator characters, making the round trip lossless (found by the new
+  deterministic fuzz test with 2000 random expressions).
+- Unit tests for the event layer: pause/presets, sort editor, context
+  menu flow, palette execution, column drag-resize and horizontal wheel.
+- CI runs `cargo audit` on every build.
+
 ## [1.2.0] - 2026-10-13
 
 ### Added

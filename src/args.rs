@@ -18,6 +18,10 @@ OPTIONS:
         --no-resolve        Start with hostname resolution disabled
         --etw               Experimental: real connection events via ETW
                             (requires an elevated terminal)
+        --dump-frame <FILE>
+                            Render one frame with live data to FILE as text
+                            and exit (no terminal needed; screenshots)
+        --frame-size <WxH>  Frame size for --dump-frame (default 120x30)
         --filter <TEXT>     Apply a filter at startup. Supports plain text,
                             're:' regex prefix, or field expressions such as
                             'process=chrome and state=established' (fields:
@@ -44,6 +48,8 @@ pub struct CliOpts {
     pub interval_ms: Option<u64>,
     pub no_resolve: bool,
     pub etw: bool,
+    pub dump_frame: Option<String>,
+    pub frame_size: Option<(u16, u16)>,
     pub filter: Option<String>,
     pub tcp_only: bool,
     pub udp_only: bool,
@@ -80,6 +86,21 @@ pub fn parse(args: &[String]) -> Result<(CliOpts, ParseOutcome), String> {
             "-V" | "--version" => opts.version = true,
             "--no-resolve" => opts.no_resolve = true,
             "--etw" => opts.etw = true,
+            "--dump-frame" => {
+                let v = value_for("--dump-frame")?;
+                opts.dump_frame = Some(v);
+            }
+            "--frame-size" => {
+                let v = value_for("--frame-size")?;
+                let (w, h) = v
+                    .split_once('x')
+                    .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+                    .ok_or_else(|| format!("--frame-size expects WxH, got {v}"))?;
+                if !(20..=500).contains(&w) || !(10..=200).contains(&h) {
+                    return Err(format!("--frame-size out of range: {v}"));
+                }
+                opts.frame_size = Some((w, h));
+            }
             "--tcp" => opts.tcp_only = true,
             "--udp" => opts.udp_only = true,
             "--interval" => {

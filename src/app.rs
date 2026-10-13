@@ -499,6 +499,173 @@ pub enum Mode {
     Settings,
     Vt,
     ContextMenu,
+    Palette,
+}
+
+/// Commands offered by the palette (Ctrl+P).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PaletteCmd {
+    Pause,
+    Help,
+    Chart,
+    Rules,
+    Profiles,
+    Settings,
+    Export,
+    Stats,
+    Log,
+    SortEditor,
+    Columns,
+    Refresh,
+    Watch,
+    Grouped,
+    Resolve,
+    ToggleTcp,
+    ToggleUdp,
+    ToggleUnconnected,
+    ToggleLoopback,
+    NextTheme,
+    Whois,
+    Quit,
+}
+
+impl PaletteCmd {
+    pub fn label(self) -> &'static str {
+        match self {
+            PaletteCmd::Pause => "pause/resume live updates",
+            PaletteCmd::Help => "help",
+            PaletteCmd::Chart => "bandwidth chart",
+            PaletteCmd::Rules => "rules: alerts and colors",
+            PaletteCmd::Profiles => "view profiles",
+            PaletteCmd::Settings => "settings",
+            PaletteCmd::Export => "export table",
+            PaletteCmd::Stats => "statistics",
+            PaletteCmd::Log => "event log",
+            PaletteCmd::SortEditor => "sort order editor",
+            PaletteCmd::Columns => "column setup",
+            PaletteCmd::Refresh => "refresh now",
+            PaletteCmd::Watch => "watch selected process",
+            PaletteCmd::Grouped => "toggle grouped view",
+            PaletteCmd::Resolve => "toggle hostname resolution",
+            PaletteCmd::ToggleTcp => "toggle TCP visibility",
+            PaletteCmd::ToggleUdp => "toggle UDP visibility",
+            PaletteCmd::ToggleUnconnected => "toggle unconnected endpoints",
+            PaletteCmd::ToggleLoopback => "toggle loopback visibility",
+            PaletteCmd::NextTheme => "next theme",
+            PaletteCmd::Whois => "whois remote address",
+            PaletteCmd::Quit => "quit",
+        }
+    }
+
+    pub const ALL: [PaletteCmd; 22] = [
+        PaletteCmd::Pause,
+        PaletteCmd::Help,
+        PaletteCmd::Chart,
+        PaletteCmd::Rules,
+        PaletteCmd::Profiles,
+        PaletteCmd::Settings,
+        PaletteCmd::Export,
+        PaletteCmd::Stats,
+        PaletteCmd::Log,
+        PaletteCmd::SortEditor,
+        PaletteCmd::Columns,
+        PaletteCmd::Refresh,
+        PaletteCmd::Watch,
+        PaletteCmd::Grouped,
+        PaletteCmd::Resolve,
+        PaletteCmd::ToggleTcp,
+        PaletteCmd::ToggleUdp,
+        PaletteCmd::ToggleUnconnected,
+        PaletteCmd::ToggleLoopback,
+        PaletteCmd::NextTheme,
+        PaletteCmd::Whois,
+        PaletteCmd::Quit,
+    ];
+
+    /// Run the command against the app (must be in Normal mode).
+    pub fn execute(self, app: &mut App) {
+        match self {
+            PaletteCmd::Pause => app.toggle_pause(),
+            PaletteCmd::Help => {
+                app.mode = Mode::Help;
+                app.help_scroll = 0;
+            }
+            PaletteCmd::Chart => app.open_chart(),
+            PaletteCmd::Rules => {
+                app.mode = Mode::Rules;
+                app.rules_cursor = 0;
+                app.rules_input = None;
+            }
+            PaletteCmd::Profiles => {
+                app.mode = Mode::Profiles;
+                app.profile_cursor = 0;
+                app.profile_input = None;
+            }
+            PaletteCmd::Settings => {
+                app.mode = Mode::Settings;
+                app.settings_cursor = 0;
+            }
+            PaletteCmd::Export => app.mode = Mode::Export,
+            PaletteCmd::Stats => app.mode = Mode::Stats,
+            PaletteCmd::Log => {
+                app.mode = Mode::Log;
+                app.log_scroll = app.event_log.len().saturating_sub(1);
+            }
+            PaletteCmd::SortEditor => {
+                app.mode = Mode::SortSetup;
+                app.sort_cursor = 0;
+            }
+            PaletteCmd::Columns => app.mode = Mode::ColumnSetup,
+            PaletteCmd::Refresh => app.request_refresh(),
+            PaletteCmd::Watch => app.toggle_watch(),
+            PaletteCmd::Grouped => app.toggle_grouped(),
+            PaletteCmd::Resolve => app.toggle_resolve(),
+            PaletteCmd::ToggleTcp => {
+                app.toggles.show_tcp = !app.toggles.show_tcp;
+                app.refresh_display();
+            }
+            PaletteCmd::ToggleUdp => {
+                app.toggles.show_udp = !app.toggles.show_udp;
+                app.refresh_display();
+            }
+            PaletteCmd::ToggleUnconnected => {
+                app.toggles.show_unconnected = !app.toggles.show_unconnected;
+                app.refresh_display();
+            }
+            PaletteCmd::ToggleLoopback => {
+                app.toggles.show_loopback = !app.toggles.show_loopback;
+                app.refresh_display();
+            }
+            PaletteCmd::NextTheme => app.settings_adjust(true),
+            PaletteCmd::Whois => app.request_whois(),
+            PaletteCmd::Quit => app.should_quit = true,
+        }
+    }
+}
+
+/// Fuzzy filter for the palette: case-insensitive subsequence match,
+/// preserving the declaration order.
+pub fn palette_matches(query: &str) -> Vec<PaletteCmd> {
+    let q: Vec<char> = query.to_lowercase().chars().collect();
+    if q.is_empty() {
+        return PaletteCmd::ALL.to_vec();
+    }
+    PaletteCmd::ALL
+        .iter()
+        .copied()
+        .filter(|cmd| {
+            let label: Vec<char> = cmd.label().to_lowercase().chars().collect();
+            let mut qi = q.iter();
+            let mut probe = qi.next();
+            for ch in label {
+                match probe {
+                    Some(p) if *p == ch => probe = qi.next(),
+                    _ => {}
+                }
+            }
+            probe.is_none()
+        })
+        .collect()
 }
 
 /// Entries of the right-click context menu.
@@ -612,6 +779,32 @@ pub struct VtState {
     pub loading: bool,
     pub text: Option<String>,
     pub scroll: u16,
+}
+
+/// Render values as an ASCII sparkline (unicode blocks, 8 levels).
+pub fn sparkline(values: &[u64], width: usize) -> String {
+    const BLOCKS: [char; 8] = [
+        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+        '\u{2588}',
+    ];
+    if values.is_empty() || width == 0 {
+        return String::new();
+    }
+    let max = values.iter().copied().max().unwrap_or(1).max(1);
+    values
+        .iter()
+        .rev()
+        .take(width)
+        .rev()
+        .map(|v| {
+            if *v == 0 {
+                '\u{00b7}' // middle dot for zero
+            } else {
+                let level = ((v * 8 - 1) / max).min(7) as usize;
+                BLOCKS[level]
+            }
+        })
+        .collect()
 }
 
 /// Rolling-window length for the bandwidth chart (≈2 minutes at 1 s).
@@ -745,47 +938,85 @@ pub fn spawn_collector(
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
 
-            let mut rows = match crate::net::collect_sockets() {
-                Ok(r) => r,
-                Err(_) => continue, // transient API failure; retry next tick
-            };
-
-            sys.refresh();
-            let pids: Vec<u32> = rows
-                .iter()
-                .map(|r| r.pid)
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .collect();
-            let processes = sys.snapshot_for(&pids);
-            let services = crate::services::map_pid_to_services();
-
-            for row in &mut rows {
-                row.process_name = processes.get(&row.pid).map(|p| p.name.clone());
-                row.service_name = services.get(&row.pid).and_then(|list| {
-                    list.first().map(|(_, display)| {
-                        if display.is_empty() {
-                            String::new()
-                        } else {
-                            display.clone()
-                        }
-                    })
-                });
-            }
-
-            estats.poll(&mut rows);
-
-            let snap = Snapshot {
-                taken_at: Local::now(),
-                rows,
-                processes,
-                services,
-            };
+            let snap = build_snapshot(&mut sys, &mut estats);
             if tx.send(AppMsg::Snapshot(snap)).is_err() {
                 break; // UI is gone
             }
         }
     });
+}
+
+/// One full snapshot: sockets + process/service enrichment + EStats. Shared
+/// by the collector loop and the `--dump-frame` renderer.
+pub fn build_snapshot(sys: &mut ProcTable, estats: &mut EStatsReader) -> Snapshot {
+    let mut rows = crate::net::collect_sockets().unwrap_or_default();
+    sys.refresh();
+    let pids: Vec<u32> = rows
+        .iter()
+        .map(|r| r.pid)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let processes = sys.snapshot_for(&pids);
+    let services = crate::services::map_pid_to_services();
+
+    for row in &mut rows {
+        row.process_name = processes.get(&row.pid).map(|p| p.name.clone());
+        row.service_name = services.get(&row.pid).and_then(|list| {
+            list.first().map(|(_, display)| {
+                if display.is_empty() {
+                    String::new()
+                } else {
+                    display.clone()
+                }
+            })
+        });
+    }
+
+    estats.poll(&mut rows);
+
+    Snapshot {
+        taken_at: Local::now(),
+        rows,
+        processes,
+        services,
+    }
+}
+
+/// Render exactly one frame with live data and write it as plain text —
+/// used by `--dump-frame` for screenshots and golden-file tests, without
+/// touching the terminal.
+pub fn dump_frame(
+    path: &std::path::Path,
+    width: u16,
+    height: u16,
+    config: Config,
+) -> Result<(), String> {
+    let mut app = App::new(config, None);
+    let mut sys = ProcTable::new();
+    let mut estats = EStatsReader::new(app.estats_enabled);
+    let snap = build_snapshot(&mut sys, &mut estats);
+    app.apply_snapshot(snap);
+
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = ratatui::Terminal::new(backend).map_err(|e| e.to_string())?;
+    terminal
+        .draw(|f| crate::ui::draw(f, &mut app))
+        .map_err(|e| e.to_string())?;
+
+    let buf = terminal.backend().buffer();
+    let mut out = String::new();
+    for y in 0..height {
+        let line: String = buf.content[(y * width) as usize..((y + 1) * width) as usize]
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    crate::export::write_file(path, &out)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -870,6 +1101,9 @@ pub struct App {
     pub log_input: Option<InputLine>,
     /// Applied event-log substring filter.
     pub log_filter: Option<String>,
+    /// Command palette (Ctrl+P).
+    pub palette_input: InputLine,
+    pub palette_cursor: usize,
     pub expanded: HashSet<u32>,
 
     // Phase C: geoip, profiles, settings
@@ -881,6 +1115,8 @@ pub struct App {
     pub profiles: Vec<crate::config::ProfileSerde>,
     pub profile_cursor: usize,
     pub profile_input: Option<InputLine>,
+    /// When set, the profile input collects an import path instead of a name.
+    pub profile_import_mode: bool,
     pub settings_cursor: usize,
 
     // Experimental ETW mode (Phase D)
@@ -1081,12 +1317,15 @@ impl App {
             settings_input: None,
             log_input: None,
             log_filter: None,
+            palette_input: InputLine::default(),
+            palette_cursor: 0,
             expanded: HashSet::new(),
             geo,
             geoip_enabled,
             profiles: config.profiles.clone(),
             profile_cursor: 0,
             profile_input: None,
+            profile_import_mode: false,
             settings_cursor: 0,
             etw_session: None,
             etw_rx,
@@ -2205,6 +2444,64 @@ impl App {
         Ok(())
     }
 
+    /// Serialize all profiles into a `[[profile]]` TOML document.
+    pub fn export_profiles(&self) -> Result<String, String> {
+        #[derive(serde::Serialize)]
+        struct ProfilesFile {
+            profile: Vec<crate::config::ProfileSerde>,
+        }
+        toml::to_string_pretty(&ProfilesFile {
+            profile: self.profiles.clone(),
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// Write all profiles to a timestamped file next to the executable.
+    pub fn export_profiles_to_file(&mut self) {
+        if self.profiles.is_empty() {
+            self.push_status("No profiles to export");
+            return;
+        }
+        let text = match self.export_profiles() {
+            Ok(t) => t,
+            Err(e) => {
+                self.push_status(format!("Export failed: {e}"));
+                return;
+            }
+        };
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let name = format!("tcptui-profiles-{ts}.toml");
+        match crate::export::write_file(std::path::Path::new(&name), &text) {
+            Ok(path) => self.push_status(format!(
+                "Exported {} profile(s) to {}",
+                self.profiles.len(),
+                path.display()
+            )),
+            Err(e) => self.push_status(format!("Export failed: {e}")),
+        }
+    }
+
+    /// Merge profiles from a `[[profile]]` TOML document (by name).
+    pub fn import_profiles(&mut self, text: &str) -> Result<usize, String> {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default)]
+        struct ProfilesFile {
+            profile: Vec<crate::config::ProfileSerde>,
+        }
+        let parsed: ProfilesFile = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut added = 0;
+        for profile in parsed.profile {
+            if profile.name.trim().is_empty() {
+                continue;
+            }
+            self.profiles.retain(|p| p.name != profile.name);
+            self.profiles.push(profile);
+            added += 1;
+        }
+        self.profiles.truncate(10);
+        Ok(added)
+    }
+
     pub fn delete_profile(&mut self, idx: usize) {
         if idx < self.profiles.len() {
             self.profiles.remove(idx);
@@ -2454,6 +2751,17 @@ impl App {
         if conns.len() > 24 {
             lines.push(format!("  ... and {} more", conns.len() - 24));
         }
+        if !self.bw_total.is_empty() {
+            let tx: Vec<u64> = self.bw_total.iter().map(|(t, _)| *t).collect();
+            let rx: Vec<u64> = self.bw_total.iter().map(|(_, r)| *r).collect();
+            lines.push(String::new());
+            lines.push(format!(
+                "System traffic (last {} samples):",
+                self.bw_total.len()
+            ));
+            lines.push(format!("  tx {}", sparkline(&tx, 60)));
+            lines.push(format!("  rx {}", sparkline(&rx, 60)));
+        }
         lines
     }
 
@@ -2520,6 +2828,61 @@ impl App {
             Err(e) => self.push_status(format!("Export failed: {e}")),
         }
         self.mode = Mode::Normal;
+    }
+
+    /// TSV text of the marked rows (None when nothing is marked).
+    pub fn marked_tsv(&self) -> Option<String> {
+        let marked: Vec<&ConnectionRow> = self
+            .visible
+            .iter()
+            .filter(|r| self.marked.contains(&r.id))
+            .collect();
+        if marked.is_empty() {
+            return None;
+        }
+        let (headers, _) = self.export_headers_and_rows(true);
+        let dns_guard = self.dns_cache.lock().ok();
+        let ctx = DisplayCtx {
+            processes: &self.processes,
+            dns: dns_guard.as_deref(),
+            resolve: self.toggles.resolve,
+        };
+        let cols: Vec<ColumnId> = self
+            .column_order
+            .iter()
+            .copied()
+            .filter(|c| *c != ColumnId::Mark && !self.column_hidden.contains(c))
+            .collect();
+        let rows: Vec<Vec<String>> = marked
+            .iter()
+            .map(|r| {
+                cols.iter()
+                    .map(|c| {
+                        if *c == ColumnId::Country {
+                            self.country_for(r)
+                        } else {
+                            cell_text(r, *c, &ctx)
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        crate::export::render(&headers, &rows, crate::export::ExportFormat::Tsv).ok()
+    }
+
+    /// Ctrl+C: TSV of marked rows when any, otherwise the selected row.
+    pub fn copy_smart(&mut self) {
+        if let Some(text) = self.marked_tsv() {
+            match crate::clipboard::copy_text(&text) {
+                Ok(()) => {
+                    let n = self.marked.len();
+                    self.push_status(format!("Copied {n} marked row(s) as TSV"));
+                }
+                Err(e) => self.push_status(format!("Clipboard error: {e}")),
+            }
+            return;
+        }
+        self.copy_current_row();
     }
 
     pub fn copy_current_row(&mut self) {

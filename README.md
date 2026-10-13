@@ -50,7 +50,11 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 **Actions**
 - Close Connection (`c`) via `SetTcpEntry` — the same API TCPView uses; batch close/kill over marked rows (`Space`, Shift+arrows)
 - End Process (`K`), whois (`w`, RFC 3912 referrals), VirusTotal lookup (`V`, optional feature)
-- Copy to clipboard (`Ctrl+C` row, `Ctrl+Shift+C` table)
+- Copy to clipboard (`Ctrl+C` row — or TSV of all marked rows; `Ctrl+Shift+C` table; JSON via the right-click menu)
+- Right-click context menu on rows; drag header edges to resize columns; Shift+wheel scrolls horizontally
+- `tcptui --dump-frame <file> [--frame-size 120x30]` renders one live frame as text (screenshots, no terminal)
+- View profiles can be exported/imported as `[[profile]]` TOML files (P popup)
+- Process details include a system-traffic sparkline
 - Export to CSV / TSV / JSON / text (`e`)
 
 ## Key map
@@ -66,6 +70,7 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 | `t` · `u` · `U` · `L` · `r` | TCP · UDP · unconnected · loopback · resolve toggles |
 | `G` · `F5` · `F6` | Group view · refresh now · watch process |
 | `p` | Pause / resume live updates (freeze the table for inspection) |
+| `Ctrl+P` | Command palette (fuzzy search over every action) |
 | `c` · `K` · `w` · `V` · `e` | Close connection · end process · whois · VirusTotal · export |
 | `Space` · Shift+arrows | Mark rows · mark a range |
 | `i` · `g` · `x` | Statistics · event log · clear marks/alerts/filter |

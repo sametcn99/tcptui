@@ -53,6 +53,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
         Mode::Rules => rules_key(app, code),
         Mode::Profiles => profiles_key(app, code),
         Mode::ContextMenu => context_menu_key(app, code),
+        Mode::Palette => palette_key(app, code),
         Mode::Settings => settings_key(app, code),
         Mode::Vt => {
             let mut scroll = app.vt_state.as_ref().map_or(0, |v| v.scroll);
@@ -62,6 +63,42 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
             }
         }
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
+    }
+}
+
+/// Command palette (Ctrl+P): fuzzy search over commands.
+fn palette_key(app: &mut App, code: KeyCode) {
+    let matches = crate::app::palette_matches(&app.palette_input.value);
+    let len = matches.len();
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') if app.palette_input.value.is_empty() => {
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+        }
+        KeyCode::Up => app.palette_cursor = app.palette_cursor.saturating_sub(1),
+        KeyCode::Down => app.palette_cursor = (app.palette_cursor + 1).min(len.saturating_sub(1)),
+        KeyCode::Enter => {
+            if let Some(cmd) = matches
+                .get(app.palette_cursor.min(len.saturating_sub(1)))
+                .copied()
+            {
+                app.mode = Mode::Normal;
+                app.palette_input.clear();
+                app.palette_cursor = 0;
+                cmd.execute(app);
+            }
+        }
+        KeyCode::Backspace => {
+            app.palette_input.backspace();
+            app.palette_cursor = 0;
+        }
+        KeyCode::Char(c) => {
+            app.palette_input.push(c);
+            app.palette_cursor = 0;
+        }
+        _ => {}
     }
 }
 
@@ -89,16 +126,31 @@ fn context_menu_key(app: &mut App, code: KeyCode) {
 /// View profiles popup (P): apply, save-current and delete.
 fn profiles_key(app: &mut App, code: KeyCode) {
     if let Some(input) = app.profile_input.as_mut() {
+        let import_mode = app.profile_import_mode;
         match code {
             KeyCode::Enter => {
-                let name = input.value.trim().to_string();
-                match app.save_current_profile(&name) {
-                    Ok(()) => app.push_status(format!("Profile saved: {name}")),
-                    Err(e) => app.push_status(e),
+                let value = input.value.trim().to_string();
+                if import_mode {
+                    match std::fs::read_to_string(&value) {
+                        Ok(text) => match app.import_profiles(&text) {
+                            Ok(n) => app.push_status(format!("Imported {n} profile(s)")),
+                            Err(e) => app.push_status(format!("Import failed: {e}")),
+                        },
+                        Err(e) => app.push_status(format!("Import failed: {e}")),
+                    }
+                    app.profile_import_mode = false;
+                } else {
+                    match app.save_current_profile(&value) {
+                        Ok(()) => app.push_status(format!("Profile saved: {value}")),
+                        Err(e) => app.push_status(e),
+                    }
                 }
                 app.profile_input = None;
             }
-            KeyCode::Esc => app.profile_input = None,
+            KeyCode::Esc => {
+                app.profile_input = None;
+                app.profile_import_mode = false;
+            }
             KeyCode::Backspace => input.backspace(),
             KeyCode::Char(c) => input.push(c),
             _ => {}
@@ -121,6 +173,13 @@ fn profiles_key(app: &mut App, code: KeyCode) {
         KeyCode::Enter => app.apply_profile(app.profile_cursor),
         KeyCode::Char('s') => {
             app.profile_input = Some(crate::app::InputLine::default());
+        }
+        KeyCode::Char('e') => app.export_profiles_to_file(),
+        KeyCode::Char('i') => {
+            app.profile_input = Some(crate::app::InputLine {
+                value: "tcptui-profiles.toml".to_string(),
+            });
+            app.profile_import_mode = true;
         }
         KeyCode::Char('x') | KeyCode::Delete => app.delete_profile(app.profile_cursor),
         _ => {}
@@ -277,7 +336,12 @@ fn normal_mode_key(app: &mut App, code: KeyCode, ctrl: bool, shift: bool, viewpo
         (KeyCode::Char('q'), false, _) | (KeyCode::Esc, false, _) => {
             app.should_quit = true;
         }
-        (KeyCode::Char('c'), true, false) => app.copy_current_row(),
+        (KeyCode::Char('c'), true, false) => app.copy_smart(),
+        (KeyCode::Char('p'), true, _) => {
+            app.mode = Mode::Palette;
+            app.palette_input.clear();
+            app.palette_cursor = 0;
+        }
         (KeyCode::Char('c'), true, true) => app.copy_table(),
         (KeyCode::Char('f'), true, _) => {
             app.mode = Mode::Searching;
@@ -798,5 +862,168 @@ impl App {
             _ => {}
         }
         self.mode = Mode::Normal;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Mode;
+    use crate::config::Config;
+    use crossterm::event::{
+        KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
+    };
+    use ratatui::layout::Rect;
+
+    fn key(code: KeyCode, ctrl: bool) -> crossterm::event::Event {
+        crossterm::event::Event::Key(KeyEvent {
+            code,
+            modifiers: if ctrl {
+                KeyModifiers::CONTROL
+            } else {
+                KeyModifiers::NONE
+            },
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> crossterm::event::Event {
+        crossterm::event::Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn area() -> Rect {
+        Rect::new(0, 0, 120, 30)
+    }
+
+    #[test]
+    fn pause_and_preset_keys() {
+        let mut app = crate::app::App::new(Config::default(), None);
+        handle_event(&mut app, key(KeyCode::Char('p'), false), area());
+        assert!(app.paused);
+        handle_event(&mut app, key(KeyCode::Char('p'), false), area());
+        assert!(!app.paused);
+
+        handle_event(&mut app, key(KeyCode::Char('3'), false), area());
+        assert!(app.filter.is_some());
+    }
+
+    #[test]
+    fn sort_editor_flips_direction() {
+        let mut app = crate::app::App::new(Config::default(), None);
+        handle_event(&mut app, key(KeyCode::Char('o'), false), area());
+        assert_eq!(app.mode, Mode::SortSetup);
+        let before = app.sort.first().copied();
+        handle_event(&mut app, key(KeyCode::Char(' '), false), area());
+        let after = app.sort.first().copied();
+        assert_eq!(before.map(|k| k.col), after.map(|k| k.col));
+        assert_ne!(before.map(|k| k.desc), after.map(|k| k.desc));
+    }
+
+    #[test]
+    fn right_click_opens_context_menu_and_enter_runs() {
+        let mut app = crate::app::App::new(Config::default(), None);
+        // Give the app a row to click: table body starts at y=3.
+        use crate::model::{ConnectionRow, Protocol, Snapshot};
+        use std::net::{IpAddr, Ipv4Addr};
+        let rows = vec![ConnectionRow::new(
+            Protocol::Tcp,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            1000,
+            None,
+            None,
+            Some(netstat2::TcpState::Listen),
+            3,
+        )];
+        app.apply_snapshot(Snapshot {
+            taken_at: chrono::Local::now(),
+            rows,
+            processes: Default::default(),
+            services: Default::default(),
+        });
+
+        // Simulate the renderer's geometry bookkeeping for hit-testing.
+        app.table_area = ratatui::layout::Rect::new(0, 1, 120, 27);
+        handle_event(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Right), 10, 3),
+            area(),
+        );
+        assert_eq!(app.mode, Mode::ContextMenu);
+        assert!(!app.ctx_menu.is_empty());
+
+        // Details is the first entry: Enter opens the process popup.
+        handle_event(&mut app, key(KeyCode::Enter, false), area());
+        assert_eq!(app.mode, Mode::ProcessDetail);
+    }
+
+    #[test]
+    fn palette_filters_and_executes() {
+        let mut app = crate::app::App::new(Config::default(), None);
+        handle_event(&mut app, key(KeyCode::Char('p'), true), area());
+        assert_eq!(app.mode, Mode::Palette);
+
+        for c in ['p', 'a', 'u', 's'] {
+            handle_event(&mut app, key(KeyCode::Char(c), false), area());
+        }
+        let matches = crate::app::palette_matches(&app.palette_input.value);
+        assert!(matches.contains(&crate::app::PaletteCmd::Pause));
+
+        handle_event(&mut app, key(KeyCode::Enter, false), area());
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.paused);
+        app.toggle_pause();
+    }
+
+    #[test]
+    fn column_drag_resizes_width() {
+        let mut app = crate::app::App::new(Config::default(), None);
+        // Header row y=2; Process column spans x=3..19, edge at ~19-20.
+        // Seed the renderer's header-cell positions for hit-testing.
+        app.table_area = ratatui::layout::Rect::new(0, 1, 120, 27);
+        app.header_cells = vec![
+            (3, 16, crate::app::ColumnId::Process),
+            (19, 6, crate::app::ColumnId::Pid),
+        ];
+        handle_event(
+            &mut app,
+            mouse(MouseEventKind::Down(MouseButton::Left), 19, 2),
+            area(),
+        );
+        assert!(app.col_resize.is_some());
+        handle_event(
+            &mut app,
+            mouse(MouseEventKind::Drag(MouseButton::Left), 25, 2),
+            area(),
+        );
+        let col = crate::app::ColumnId::Process;
+        let w = app
+            .column_width
+            .get(&col)
+            .copied()
+            .unwrap_or_else(|| col.default_width());
+        assert!(w > col.default_width());
+        handle_event(
+            &mut app,
+            mouse(MouseEventKind::Up(MouseButton::Left), 25, 2),
+            area(),
+        );
+        assert!(app.col_resize.is_none());
+    }
+
+    #[test]
+    fn horizontal_wheel_scrolls() {
+        let mut app = crate::app::App::new(Config::default(), None);
+        app.h_max = 100;
+        handle_event(&mut app, mouse(MouseEventKind::ScrollRight, 10, 10), area());
+        assert!(app.scroll_x > 0);
+        handle_event(&mut app, mouse(MouseEventKind::ScrollLeft, 10, 10), area());
+        assert!(app.scroll_x < 100);
     }
 }

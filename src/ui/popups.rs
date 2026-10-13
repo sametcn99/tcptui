@@ -46,6 +46,7 @@ pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         Mode::Rules => draw_rules(f, app, area),
         Mode::Profiles => draw_profiles(f, app, area),
         Mode::ContextMenu => draw_context_menu(f, app, area),
+        Mode::Palette => draw_palette(f, app, area),
         Mode::Settings => draw_settings(f, app, area),
         Mode::Vt => draw_vt(f, app, area),
         _ => {}
@@ -83,6 +84,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("V", "VirusTotal lookup of the process (optional feature)"),
         ("", ""),
         ("Filtering", ""),
+        ("Ctrl+P", "command palette (fuzzy search, Enter runs)"),
         ("/", "filter prompt (Up/Down: history)"),
         ("1-8", "presets: 1 tcp  2 udp  3 established  4 listen"),
         ("", "5 loopback  6 non-loopback  7 new  8 clear"),
@@ -126,7 +128,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("K", "end process(es) of selected/marked rows"),
         ("w", "whois lookup of remote address"),
         ("e", "export table (CSV/TSV/JSON/TXT)"),
-        ("Ctrl+C", "copy current row to clipboard"),
+        ("Ctrl+C", "copy row (TSV of marked rows when any)"),
         ("Ctrl+Shift+C", "copy visible table (TSV)"),
         ("x", "clear marks/filter/search"),
         ("q / Esc", "quit (close popup first)"),
@@ -818,7 +820,7 @@ fn draw_profiles(f: &mut Frame, app: &App, area: Rect) {
         ))));
     } else {
         items.push(ListItem::new(Line::from(Span::styled(
-            "Enter:apply  s:save current view  x:delete  Esc:close&save",
+            "Enter:apply  s:save  e:export  i:import  x:delete  Esc:close&save",
             Style::default().fg(app.theme.changed),
         ))));
     }
@@ -901,6 +903,46 @@ fn on_off(b: bool) -> String {
     } else {
         "off".to_string()
     }
+}
+
+/// Command palette (Ctrl+P).
+fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered_rect(50, 55, area);
+    let matches = crate::app::palette_matches(&app.palette_input.value);
+    let mut items: Vec<ListItem> = Vec::new();
+    for (idx, cmd) in matches.iter().enumerate() {
+        let style = if idx == app.palette_cursor {
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.normal)
+        };
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!(" {}", cmd.label()),
+            style,
+        ))));
+    }
+    if matches.is_empty() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            " no matching command",
+            Style::default().fg(app.theme.dim),
+        ))));
+    }
+    items.push(ListItem::new(Line::from("")));
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("> ", Style::default().fg(app.theme.accent)),
+        Span::raw(app.palette_input.value.clone()),
+        Span::styled("▏", Style::default().fg(app.theme.dim)),
+    ])));
+    items.push(ListItem::new(Line::from(Span::styled(
+        "type to filter · Up/Down select · Enter run · Esc close",
+        Style::default().fg(app.theme.changed),
+    ))));
+    let list = List::new(items).block(popup_block("Command palette", app));
+    f.render_widget(Clear, rect);
+    f.render_widget(list, rect);
 }
 
 /// Right-click context menu.

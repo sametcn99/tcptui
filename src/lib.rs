@@ -23,3 +23,5 @@ pub mod net;
 pub mod proc;
 pub mod services;
 pub mod ui;
+#[cfg(feature = "virustotal")]
+pub mod vt;

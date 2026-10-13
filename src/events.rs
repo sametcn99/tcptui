@@ -53,16 +53,14 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
         Mode::Rules => rules_key(app, code),
         Mode::Profiles => profiles_key(app, code),
         Mode::Settings => settings_key(app, code),
-        Mode::Vt => misc_popup_key(app, code),
+        Mode::Vt => {
+            let mut scroll = app.vt_state.as_ref().map_or(0, |v| v.scroll);
+            scrollable_popup_key(app, code, &mut scroll);
+            if let Some(v) = app.vt_state.as_mut() {
+                v.scroll = scroll;
+            }
+        }
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
-    }
-}
-
-/// Minimal close handling for popups whose full keymaps arrive with their
-/// feature phases.
-fn misc_popup_key(app: &mut App, code: KeyCode) {
-    if matches!(code, KeyCode::Esc | KeyCode::Char('q')) {
-        app.mode = Mode::Normal;
     }
 }
 
@@ -278,6 +276,7 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
             app.mode = Mode::Settings;
             app.settings_cursor = 0;
         }
+        KeyCode::Char('V') => app.request_vt(),
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             app.apply_preset(c as u8 - b'0');
         }

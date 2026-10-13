@@ -163,6 +163,13 @@ impl Default for GeoIpConfig {
     }
 }
 
+/// Optional VirusTotal lookups (requires the 'virustotal' cargo feature).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VirusTotalConfig {
+    pub api_key: String,
+}
+
 /// Experimental ETW connection-event mode.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -223,6 +230,9 @@ pub struct Config {
     /// Experimental ETW mode.
     #[serde(default)]
     pub etw: EtwConfig,
+    /// Optional VirusTotal integration.
+    #[serde(default)]
+    pub virustotal: VirusTotalConfig,
 }
 
 /// `%APPDATA%\tcptui\config.toml`.

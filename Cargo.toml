@@ -1,8 +1,9 @@
 [package]
 name = "tcptui"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "Terminal UI clone of Sysinternals TCPView for Windows"
+license = "MIT"
 
 [lib]
 name = "tcptui"
@@ -28,9 +29,11 @@ ratatui = "0.30.2"
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = { version = "0.11.1", optional = true }
 sysinfo = "0.39.6"
 thiserror = "2.0.21"
 toml = "1.1.8"
+ureq = { version = "2", default-features = false, features = ["native-tls", "json"], optional = true }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_IpHelper",
@@ -52,3 +55,4 @@ strip = true
 [features]
 default = ["geoip"]
 geoip = ["dep:maxminddb"]
+virustotal = ["dep:ureq", "dep:sha2"]

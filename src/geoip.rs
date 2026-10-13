@@ -5,6 +5,7 @@
 //! resolver stays `None`, the Country column stays hidden and everything
 //! else keeps working (soft failure, same pattern as EStats).
 
+#[cfg(feature = "geoip")]
 use std::collections::HashMap;
 use std::net::IpAddr;
 

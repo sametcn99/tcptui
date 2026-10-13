@@ -574,6 +574,15 @@ pub enum BwView {
     Selected,
 }
 
+/// VirusTotal popup state (works with or without the cargo feature).
+#[derive(Clone, Debug)]
+pub struct VtState {
+    pub subject: String,
+    pub loading: bool,
+    pub text: Option<String>,
+    pub scroll: u16,
+}
+
 /// Rolling-window length for the bandwidth chart (≈2 minutes at 1 s).
 pub const BW_WINDOW: usize = 120;
 
@@ -827,6 +836,11 @@ pub struct App {
     // Authenticode cache (Phase D)
     pub signed_cache: HashMap<String, Option<bool>>,
 
+    // VirusTotal (Phase E)
+    pub vt_state: Option<VtState>,
+    pub vt_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub vt_api_key: String,
+
     // Columns
     pub column_order: Vec<ColumnId>,
     pub column_hidden: HashSet<ColumnId>,
@@ -1012,6 +1026,9 @@ impl App {
             etw_rx,
             etw_connects: HashMap::new(),
             signed_cache: HashMap::new(),
+            vt_state: None,
+            vt_rx: None,
+            vt_api_key: config.virustotal.api_key.clone(),
             column_order,
             column_hidden,
             column_width,
@@ -1104,6 +1121,26 @@ impl App {
         }
         for event in etw_events {
             self.handle_etw_event(event);
+        }
+        let vt_results: Vec<Result<String, String>> = self
+            .vt_rx
+            .as_ref()
+            .map(|rx| {
+                let mut out = Vec::new();
+                while let Ok(r) = rx.try_recv() {
+                    out.push(r);
+                }
+                out
+            })
+            .unwrap_or_default();
+        for result in vt_results {
+            if let Some(state) = &mut self.vt_state {
+                state.loading = false;
+                match result {
+                    Ok(text) => state.text = Some(text),
+                    Err(e) => state.text = Some(format!("VirusTotal lookup failed: {e}")),
+                }
+            }
         }
     }
 
@@ -2124,6 +2161,50 @@ impl App {
                 self.theme = theme_by_name(next);
             }
             _ => self.settings_activate(),
+        }
+    }
+
+    /// Launch a VirusTotal lookup for the selected row's executable.
+    pub fn request_vt(&mut self) {
+        let Some(row) = self.current_row() else {
+            return;
+        };
+        let Some(exe) = self.processes.get(&row.pid).and_then(|p| p.exe.clone()) else {
+            self.push_status("No executable path known for this endpoint");
+            return;
+        };
+
+        #[cfg(not(feature = "virustotal"))]
+        {
+            let _ = exe;
+            self.push_status(
+                "built without the 'virustotal' feature (rebuild with --features virustotal)",
+            );
+        }
+
+        #[cfg(feature = "virustotal")]
+        {
+            if self.vt_api_key.trim().is_empty() {
+                self.push_status("set [virustotal] api_key in config.toml to enable lookups");
+                return;
+            }
+            let subject = row.process_display();
+            self.vt_state = Some(VtState {
+                subject: format!("{subject} — {exe}"),
+                loading: true,
+                text: None,
+                scroll: 0,
+            });
+            self.mode = Mode::Vt;
+            let (sx, rx) = std::sync::mpsc::channel();
+            self.vt_rx = Some(rx);
+            let key = self.vt_api_key.clone();
+            std::thread::spawn(move || {
+                let result = crate::vt::sha256_file(std::path::Path::new(&exe))
+                    .and_then(|hash| crate::vt::lookup(&key, &hash))
+                    .map_err(|e| e.to_string());
+                let _ = sx.send(result);
+            });
         }
     }
 

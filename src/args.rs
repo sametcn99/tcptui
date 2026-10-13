@@ -34,6 +34,7 @@ OPTIONS:
 
 KEYS (inside the TUI):
     ?  help    /  filter    1-8 presets    o  sort order    Ctrl+F search
+    B  chart   A  rules     P  profiles    M  settings     V  virustotal
     c  close connection    K  end process    w  whois    e  export
     F5 refresh    F6 watch process    r  resolve addresses
 ";

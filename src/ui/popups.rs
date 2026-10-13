@@ -46,6 +46,7 @@ pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         Mode::Rules => draw_rules(f, app, area),
         Mode::Profiles => draw_profiles(f, app, area),
         Mode::Settings => draw_settings(f, app, area),
+        Mode::Vt => draw_vt(f, app, area),
         _ => {}
     }
 }
@@ -76,6 +77,9 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("A", "rules: alerts + coloring (Tab: sections)"),
         ("alerts", "fire when a NEW endpoint matches an expression"),
         ("colors", "Wireshark-style row colors by expression"),
+        ("P", "view profiles (apply/save the current view)"),
+        ("M", "settings (interval, theme, EStats, GeoIP, ...)"),
+        ("V", "VirusTotal lookup of the process (optional feature)"),
         ("", ""),
         ("Filtering", ""),
         ("/", "filter prompt (Up/Down: history)"),
@@ -818,4 +822,38 @@ fn on_off(b: bool) -> String {
     } else {
         "off".to_string()
     }
+}
+
+/// VirusTotal report popup (`V`).
+fn draw_vt(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered_rect(70, 60, area);
+    let Some(state) = &app.vt_state else {
+        return;
+    };
+    let body: Vec<Line> = if state.loading {
+        vec![Line::from(Span::styled(
+            format!("Hashing and querying VirusTotal for {} ...", state.subject),
+            Style::default().fg(app.theme.changed),
+        ))]
+    } else {
+        state
+            .text
+            .as_deref()
+            .unwrap_or("(no data)")
+            .lines()
+            .map(|l| {
+                Line::from(Span::styled(
+                    l.to_string(),
+                    Style::default().fg(app.theme.normal),
+                ))
+            })
+            .collect()
+    };
+    let title = format!("VirusTotal — {}", state.subject);
+    let paragraph = Paragraph::new(body)
+        .block(popup_block(&title, app))
+        .wrap(Wrap { trim: false })
+        .scroll((state.scroll, 0));
+    f.render_widget(Clear, rect);
+    f.render_widget(paragraph, rect);
 }

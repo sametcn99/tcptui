@@ -3,6 +3,31 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Pause/resume live updates (`p`): while paused the title bar shows a
+  `PAUSED` indicator, incoming snapshots are dropped before the diff runs
+  so the table, colors, statistics and bandwidth chart hold still for
+  inspection; ETW connect timestamps keep buffering so ages stay accurate
+  after resuming; `F5` is inert while paused.
+- Help popup rendered as a two-column grid: entries balanced across two
+  aligned key columns with section headers kept in place, row-based
+  scrolling (`j/k`, `PgUp/PgDn`) and a hint on the bottom border.
+
+### Fixed
+- Column headers were invisible in the main table: the header row was
+  built as a single cell, clipping every title into the 2-character
+  gutter. Headers are now one cell per column, aligned with the grid and
+  still showing sort indicator arrows.
+- Mouse click geometry was off by the header line: header clicks now hit
+  the row inside the top border (sorting works again, Shift+click still
+  appends a sort key) and body clicks select the correct row.
+- Pending alerts covered the shortcut-hint line in the footer until
+  acknowledged. The footer now grows to three lines while alerts are
+  pending: the alert message (truncated to the terminal width) gets its
+  own line and hints/statistics stay visible.
+
 ## [1.0.0] - 2026-10-13
 
 ### Added

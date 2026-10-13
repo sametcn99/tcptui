@@ -1,0 +1,12 @@
+# Pair this installer manifest with the usual packageDefaultLocale and
+# version manifests required by winget-pkgs (see the repo's authoring docs).
+PackageIdentifier: sametcn99.tcptui
+PackageVersion: __VERSION__
+PackageName: tcptui
+Publisher: sametcn99
+License: MIT
+ShortDescription: Terminal UI clone of Sysinternals TCPView for Windows
+PackageUrl: https://github.com/sametcn99/tcptui
+Moniker: tcptui
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

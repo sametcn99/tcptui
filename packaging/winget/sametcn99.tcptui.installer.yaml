@@ -1,0 +1,18 @@
+# Winget manifest template. Replace __VERSION__ and __HASH__ (SHA-256 of
+# tcptui-v__VERSION__-windows-x86_64.zip) before submitting to
+# microsoft/winget-pkgs under manifests/s/sametcn99/tcptui/__VERSION__/.
+PackageIdentifier: sametcn99.tcptui
+PackageVersion: __VERSION__
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: tcptui.exe
+    PortableCommandAlias: tcptui
+  - RelativeFilePath: tcpvcon.exe
+    PortableCommandAlias: tcpvcon
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/sametcn99/tcptui/releases/download/v__VERSION__/tcptui-v__VERSION__-windows-x86_64.zip
+    InstallerSha256: __HASH__
+ManifestType: installer
+ManifestVersion: 1.6.0

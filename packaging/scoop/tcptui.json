@@ -1,11 +1,12 @@
 {
-    "version": "1.0.0",
+    "version": "1.3.0",
     "description": "Terminal UI clone of Sysinternals TCPView for Windows",
     "homepage": "https://github.com/sametcn99/tcptui",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/sametcn99/tcptui/releases/download/v1.0.0/tcptui-v1.0.0-windows-x86_64.zip",
+            "url": "https://github.com/sametcn99/tcptui/releases/download/v1.3.0/tcptui-v1.3.0-windows-x86_64.zip",
+            "hash": "0aba530fa44a91f22c03cd3088c410a3e9ab0743d133149f1b6dfaef9a338226",
             "bin": ["tcptui.exe", "tcpvcon.exe"]
         }
     },

@@ -120,7 +120,11 @@ cargo fmt --all --check
 
 ## Distribution
 
-CI builds on every push and publishes zipped binaries with SHA-256 checksums for every `v*` tag. A Scoop manifest lives in `packaging/scoop/`; for winget, submit the manifest to `microsoft/winget-pkgs` referencing the release zip.
+CI builds on every push and publishes zipped binaries with SHA-256 checksums for every `v*` tag. Every release also carries a rendered `scoop-tcptui.json` (correct version, URL and hash) ready for Scoop buckets; the in-repo template lives in `packaging/scoop/`. For winget, fill in the templates under `packaging/winget/` (version + SHA-256 from the release) and submit them to `microsoft/winget-pkgs`.
+
+```
+scoop install https://github.com/sametcn99/tcptui/releases/download/v1.3.0/scoop-tcptui.json
+```
 
 ## Architecture notes
 

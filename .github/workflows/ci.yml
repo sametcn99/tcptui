@@ -105,10 +105,22 @@ jobs:
           "$hash  $zip" | Out-File -Encoding ascii sha256sums.txt
           Write-Output "ZIP=$zip" >> $env:GITHUB_ENV
 
+      - name: Render Scoop manifest for this release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          $hash = (Get-FileHash "tcptui-$tag-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLower()
+          $manifest = Get-Content packaging/scoop/tcptui.json -Raw
+          $manifest = $manifest -replace '"version": "[^"]+"', "`"version`": `"$tag`""
+          $manifest = $manifest -replace 'download/v[^/]+/tcptui-v[^-]+-', "download/v$tag/tcptui-v$tag-"
+          $manifest = $manifest -replace '"hash": "[^"]*"', "`"hash`": `"$hash`""
+          Set-Content -Encoding ascii scoop-tcptui.json $manifest
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             tcptui-*-windows-x86_64.zip
             sha256sums.txt
+            scoop-tcptui.json
           generate_release_notes: true

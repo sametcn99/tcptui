@@ -7,6 +7,9 @@
 //! - [`app`] owns application state and the background collector,
 //! - [`events`] and [`ui`] render and drive the terminal interface.
 
+#[cfg(not(windows))]
+compile_error!("tcptui is Windows-only: it builds on Win32 APIs (iphlpapi, ETW, WinTrust).");
+
 pub mod actions;
 pub mod app;
 pub mod args;

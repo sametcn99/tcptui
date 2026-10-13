@@ -334,7 +334,7 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
             app.log_scroll = app.event_log.len().saturating_sub(1);
         }
         KeyCode::Char(' ') => app.toggle_mark(),
-        KeyCode::Enter => app.begin_detail(),
+        KeyCode::Enter => app.activate(),
         KeyCode::Char('x') => {
             // Clear marks / alerts / filter / search in one stroke.
             if !app.marked.is_empty() {

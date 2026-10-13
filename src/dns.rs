@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use windows::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, GetNameInfoW, IN_ADDR, IN_ADDR_0, NI_MAXHOST, NI_NAMEREQD, SOCKADDR,
@@ -78,19 +77,6 @@ impl DnsCache {
 }
 
 pub type SharedDnsCache = Arc<Mutex<DnsCache>>;
-
-/// Spawn the DNS worker. It receives IPs to resolve, updates the shared
-/// cache, and exits when the sender side is dropped.
-pub fn spawn_worker(rx: std::sync::mpsc::Receiver<IpAddr>, cache: SharedDnsCache) {
-    thread::spawn(move || {
-        while let Ok(ip) = rx.recv() {
-            let hostname = reverse_lookup(ip);
-            if let Ok(mut c) = cache.lock() {
-                c.resolve(ip, hostname);
-            }
-        }
-    });
-}
 
 /// Blocking reverse lookup of a single address. `NI_NAMEREQD` makes numeric
 /// results a failure, matching TCPView's resolve toggle behavior.

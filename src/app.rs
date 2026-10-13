@@ -776,7 +776,6 @@ pub struct App {
     // Channels
     pub collector_tx: Sender<CollectorCmd>,
     collector_rx: Receiver<AppMsg>,
-    dns_tx: Sender<IpAddr>,
     whois_sx: Sender<Result<String, String>>,
     whois_rx: Receiver<Result<String, String>>,
 
@@ -815,6 +814,9 @@ pub struct App {
     pub bw_selected: std::collections::VecDeque<(u64, u64)>,
     pub bw_selected_id: Option<RowId>,
     pub bw_view: BwView,
+    /// Re-baseline the EStats counters on the next snapshot after resuming
+    /// from pause, so the paused window does not show up as one big spike.
+    pub bw_skip_next: bool,
     pub expanded: HashSet<u32>,
 
     // Phase C: geoip, profiles, settings
@@ -893,11 +895,9 @@ impl App {
     ) -> App {
         let (collector_tx, collector_rx_cmd) = std::sync::mpsc::channel();
         let (msg_tx, collector_rx) = std::sync::mpsc::channel();
-        let (dns_tx, dns_rx) = std::sync::mpsc::channel();
         let (whois_sx, whois_rx) = std::sync::mpsc::channel();
 
         let dns_cache: SharedDnsCache = Arc::new(Mutex::new(DnsCache::new()));
-        dns::spawn_worker(dns_rx, Arc::clone(&dns_cache));
 
         let interval = Duration::from_millis(config.view.refresh_interval_ms.clamp(250, 60000));
         spawn_collector(collector_rx_cmd, msg_tx, interval, config.estats.enabled);
@@ -982,7 +982,6 @@ impl App {
             stats: Stats::default(),
             collector_tx,
             collector_rx,
-            dns_tx,
             whois_sx,
             whois_rx,
             toggles: ViewToggles {
@@ -1018,6 +1017,7 @@ impl App {
             bw_selected: std::collections::VecDeque::new(),
             bw_selected_id: None,
             bw_view: BwView::Total,
+            bw_skip_next: false,
             expanded: HashSet::new(),
             geo,
             geoip_enabled,
@@ -1297,6 +1297,13 @@ impl App {
             })
             .collect();
 
+        if self.bw_skip_next {
+            // First snapshot after unpausing: refresh the baseline only.
+            self.bw_skip_next = false;
+            self.bw_prev = current;
+            return;
+        }
+
         let mut dtx = 0u64;
         let mut drx = 0u64;
         for (id, (tx, rx)) in &current {
@@ -1481,9 +1488,16 @@ impl App {
                 if let Ok(mut c) = self.dns_cache.lock() {
                     c.mark_pending(ip);
                 }
-                if self.dns_tx.send(ip).is_ok() {
-                    queued += 1;
-                }
+                // One short-lived thread per lookup: a slow DNS server can
+                // no longer stall the other queued resolutions.
+                let cache = Arc::clone(&self.dns_cache);
+                std::thread::spawn(move || {
+                    let hostname = dns::reverse_lookup(ip);
+                    if let Ok(mut c) = cache.lock() {
+                        c.resolve(ip, hostname);
+                    }
+                });
+                queued += 1;
             }
         }
     }
@@ -1874,7 +1888,41 @@ impl App {
         self.mode = Mode::Confirm;
     }
 
+    /// The selected group node, if any (grouped view).
+    pub fn selected_group(&self) -> Option<(u32, String)> {
+        match self.display.get(self.selected) {
+            Some(DisplayNode::Group { pid, name, .. }) => Some((*pid, name.clone())),
+            _ => None,
+        }
+    }
+
+    /// First row of a group that has a remote endpoint (whois/VT targets).
+    pub fn group_first_remote_row(&self, pid: u32) -> Option<&ConnectionRow> {
+        self.visible
+            .iter()
+            .find(|r| r.pid == pid && r.remote_addr.is_some())
+    }
+
+    /// Enter on the selection: expand/collapse groups, details on rows.
+    pub fn activate(&mut self) {
+        if let Some((pid, _)) = self.selected_group() {
+            if self.expanded.remove(&pid) {
+                // was expanded -> collapse
+            } else {
+                self.expanded.insert(pid);
+            }
+            self.refresh_display();
+        } else {
+            self.begin_detail();
+        }
+    }
+
     pub fn begin_confirm_kill(&mut self) {
+        if let Some((pid, name)) = self.selected_group() {
+            self.confirm = Some(ConfirmAction::Kill(vec![(pid, name)]));
+            self.mode = Mode::Confirm;
+            return;
+        }
         let mut pids: Vec<u32> = self.target_rows().iter().map(|r| r.pid).collect();
         pids.sort();
         pids.dedup();
@@ -1956,10 +2004,16 @@ impl App {
     }
 
     pub fn request_whois(&mut self) {
-        let Some(row) = self.current_row() else {
-            return;
+        let group_row = self.selected_group().and_then(|(pid, _)| {
+            self.group_first_remote_row(pid)
+                .map(|r| (r.remote_addr, r.process_display()))
+        });
+        let (addr, _label) = match (group_row, self.current_row()) {
+            (Some((addr, label)), _) => (addr, label),
+            (None, Some(row)) => (row.remote_addr, row.process_display()),
+            (None, None) => return,
         };
-        let Some(addr) = row.remote_addr else {
+        let Some(addr) = addr else {
             self.push_status("Selected endpoint has no remote address");
             return;
         };
@@ -2172,10 +2226,15 @@ impl App {
 
     /// Launch a VirusTotal lookup for the selected row's executable.
     pub fn request_vt(&mut self) {
-        let Some(row) = self.current_row() else {
+        let pid = match (self.selected_group(), self.current_row()) {
+            (Some((pid, _)), _) => Some(pid),
+            (None, Some(row)) => Some(row.pid),
+            (None, None) => None,
+        };
+        let Some(pid) = pid else {
             return;
         };
-        let Some(exe) = self.processes.get(&row.pid).and_then(|p| p.exe.clone()) else {
+        let Some(exe) = self.processes.get(&pid).and_then(|p| p.exe.clone()) else {
             self.push_status("No executable path known for this endpoint");
             return;
         };
@@ -2194,7 +2253,14 @@ impl App {
                 self.push_status("set [virustotal] api_key in config.toml to enable lookups");
                 return;
             }
-            let subject = row.process_display();
+            let subject = self
+                .selected_group()
+                .map(|(_, name)| name)
+                .unwrap_or_else(|| {
+                    self.current_row()
+                        .map(|r| r.process_display())
+                        .unwrap_or_default()
+                });
             self.vt_state = Some(VtState {
                 subject: format!("{subject} — {exe}"),
                 loading: true,
@@ -2438,6 +2504,10 @@ impl App {
     /// Freeze or resume live updates (p).
     pub fn toggle_pause(&mut self) {
         self.paused = !self.paused;
+        if !self.paused {
+            // Re-baseline bandwidth counters; deltas resume from now.
+            self.bw_skip_next = true;
+        }
         self.push_status(if self.paused {
             "Refresh paused — press p to resume".to_string()
         } else {
@@ -3078,5 +3148,77 @@ mod phase_d_tests {
             crate::actions::verify_signed(std::path::Path::new("Z:/no/such/file.exe")),
             Some(false)
         );
+    }
+}
+
+#[cfg(test)]
+mod phase_f_tests {
+    use super::tests::{synthetic_snapshot_like, v4};
+    use super::*;
+
+    #[test]
+    fn resume_after_pause_rebaselines_bandwidth() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        // Establish a baseline through two snapshots with counters.
+        let mut snap = synthetic_snapshot_like();
+        snap.rows[0].tx_bytes = Some(100);
+        snap.rows[0].rx_bytes = Some(100);
+        app.apply_snapshot(snap.clone());
+        snap.rows[0].tx_bytes = Some(200);
+        snap.rows[0].rx_bytes = Some(200);
+        app.apply_snapshot(snap.clone());
+        assert_eq!(app.bw_total.back(), Some(&(100, 100)));
+
+        // Pause, grow the counters "while frozen", resume.
+        app.toggle_pause();
+        snap.rows[0].tx_bytes = Some(10_000);
+        snap.rows[0].rx_bytes = Some(10_000);
+        app.apply_snapshot(snap.clone()); // dropped while paused
+        app.toggle_pause(); // resume -> re-baseline flag set
+        app.apply_snapshot(snap.clone()); // baseline only, no spike sample
+        assert!(app.bw_total.back().is_none() || *app.bw_total.back().unwrap() != (9_800, 9_800));
+
+        // Next snapshot resumes normal deltas from the new baseline.
+        snap.rows[0].tx_bytes = Some(10_050);
+        snap.rows[0].rx_bytes = Some(10_020);
+        app.apply_snapshot(snap);
+        assert_eq!(app.bw_total.back(), Some(&(50, 20)));
+    }
+
+    #[test]
+    fn group_nodes_support_actions() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        app.apply_snapshot(synthetic_snapshot_like());
+        app.toggle_grouped();
+        // Two distinct PIDs -> two group nodes; select the first.
+        assert!(app.display_len() >= 2);
+        app.selected = 0;
+        let (pid, name) = app.selected_group().expect("group selected");
+
+        // Enter toggles expansion instead of doing nothing.
+        assert!(!app.expanded.contains(&pid));
+        app.activate();
+        assert!(app.expanded.contains(&pid));
+        app.activate();
+        assert!(!app.expanded.contains(&pid));
+
+        // K offers to kill the grouped process.
+        app.begin_confirm_kill();
+        match &app.confirm {
+            Some(ConfirmAction::Kill(procs)) => {
+                assert_eq!(procs.len(), 1);
+                assert_eq!(procs[0].0, pid);
+                assert_eq!(procs[0].1, name);
+            }
+            other => panic!("expected kill confirmation, got {other:?}"),
+        }
+        app.confirm = None;
+        app.mode = Mode::Normal;
+
+        // Whois picks the group's first row with a remote endpoint.
+        app.request_whois();
+        assert_eq!(app.mode, Mode::Whois);
+        assert!(app.whois.is_some());
+        let _ = v4(127, 0, 0, 1);
     }
 }

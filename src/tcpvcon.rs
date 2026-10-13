@@ -21,6 +21,9 @@ tcpvcon [-a] [-c] [-j] [-n] [process name or PID]
   -c   Print output as CSV.
   -j   Print output as JSON.
   -n   Don't resolve addresses.
+  --filter <EXPR>   Structured filter, same language as tcptui; quote the
+                    expression in your shell when it contains spaces, e.g.
+                    --filter \"state=established and not loopback\"
   -h   Print this help.
   -V   Print version.
 
@@ -33,6 +36,7 @@ struct Cli {
     json: bool,
     resolve: bool,
     filter: Option<String>,
+    expression: Option<String>,
     help: bool,
     version: bool,
 }
@@ -44,6 +48,7 @@ fn parse_args(args: &[String]) -> Result<Cli> {
         json: false,
         resolve: true,
         filter: None,
+        expression: None,
         help: false,
         version: false,
     };
@@ -52,6 +57,12 @@ fn parse_args(args: &[String]) -> Result<Cli> {
             "-a" => cli.all = true,
             "-c" => cli.csv = true,
             "-j" | "--json" => cli.json = true,
+            "--filter" => {
+                anyhow::bail!("--filter expects a value: --filter \"process:chrome and port=443\"");
+            }
+            arg if arg.starts_with("--filter=") => {
+                cli.expression = Some(arg.strip_prefix("--filter=").unwrap().to_string());
+            }
             "-n" => cli.resolve = false,
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,
@@ -121,6 +132,13 @@ fn run(cli: &Cli) -> Result<()> {
             let needle = f.to_lowercase();
             rows.retain(|r| r.process_display().to_lowercase().contains(&needle));
         }
+    }
+
+    // Structured filter, same language as tcptui (applied after process
+    // enrichment so path/process fields work).
+    if let Some(expr) = &cli.expression {
+        let kind = tcptui::app::FilterKind::parse(expr).map_err(|e| anyhow::anyhow!("{e}"))?;
+        rows.retain(|r| kind.matches_row(r, &processes));
     }
 
     // Default (without -a): established TCP connections only, like tcpvcon.

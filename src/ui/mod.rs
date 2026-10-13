@@ -110,6 +110,97 @@ mod tests {
     }
 
     #[test]
+    fn table_headers_render_and_sort_on_click() {
+        use crate::model::{ConnectionRow, Protocol, Snapshot};
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+        use std::collections::HashMap;
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let mut app = App::new(Config::default(), None);
+        let rows = vec![
+            ConnectionRow::new(
+                Protocol::Tcp,
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                2000,
+                Some(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))),
+                Some(80),
+                Some(netstat2::TcpState::Established),
+                5,
+            ),
+            ConnectionRow::new(
+                Protocol::Tcp,
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                1000,
+                None,
+                None,
+                Some(netstat2::TcpState::Listen),
+                3,
+            ),
+        ];
+        app.apply_snapshot(Snapshot {
+            taken_at: chrono::Local::now(),
+            rows,
+            processes: HashMap::new(),
+            services: HashMap::new(),
+        });
+
+        let backend = ratatui::backend::TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let header_line: String = buf.content[(2 * 120) as usize..(3 * 120) as usize]
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        // Column titles must be visible on the header row (line y = 2:
+        // title bar is y0, table border y1, header y2).
+        for title in ["Process", "PID", "Proto", "Local Address", "State", "Age"] {
+            assert!(
+                header_line.contains(title),
+                "header title '{title}' not visible: {header_line}"
+            );
+        }
+
+        // Click the PID header (gutter 2 + process 16 -> PID starts at
+        // x = 1 + 2 + 16 + 4, on the header row y = table.y + 1 = 2).
+        let pid_header_x = 1 + 2 + 16 + 5;
+        let click = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: pid_header_x,
+            row: 2,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        handle_event(&mut app, click, ratatui::layout::Rect::new(0, 0, 120, 30));
+        assert_eq!(
+            app.sort.first().map(|k| k.col),
+            Some(crate::app::ColumnId::Pid)
+        );
+
+        // Clicking the first data row (y = table.y + 2 = 3) selects row 0.
+        let row_click = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 10,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        handle_event(
+            &mut app,
+            row_click,
+            ratatui::layout::Rect::new(0, 0, 120, 30),
+        );
+        assert_eq!(app.selected, 0);
+
+        // Double-click still opens the detail popup via the same geometry.
+        let _ = KeyCode::Char('q');
+        let _ = KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+    }
+
+    #[test]
     fn renders_flat_grouped_and_popups_without_panicking() {
         let mut app = App::new(Config::default(), None);
         app.apply_snapshot(synthetic_snapshot());

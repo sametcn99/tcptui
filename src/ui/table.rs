@@ -14,7 +14,8 @@ const GUTTER: u16 = 2;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     app.table_area = area;
-    let body_height = area.height.saturating_sub(2) as usize;
+    // Inner height minus the header row: border + header + border.
+    let body_height = area.height.saturating_sub(3) as usize;
     app.ensure_visible(body_height);
 
     // Everything below reads `app` immutably while the DNS cache guard is
@@ -38,12 +39,14 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         let sort_desc = app.sort.first().map(|k| k.desc).unwrap_or(false);
 
         let mut constraints: Vec<Constraint> = vec![Constraint::Length(GUTTER)];
-        let mut header_cells: Vec<Span> = vec![Span::styled(
+        // One header CELL per column so titles align with the grid; a single
+        // cell would squeeze every title into the gutter width.
+        let mut header_cells: Vec<Cell> = vec![Cell::from(Span::styled(
             "M",
             Style::default()
                 .fg(app.theme.header)
                 .add_modifier(Modifier::BOLD),
-        )];
+        ))];
         let mut positions: Vec<(u16, u16, ColumnId)> = Vec::with_capacity(cols.len());
         let mut x = area.x + 1 + GUTTER;
 
@@ -64,7 +67,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                     .fg(app.theme.header)
                     .add_modifier(Modifier::BOLD)
             };
-            header_cells.push(Span::styled(title_text, style));
+            header_cells.push(Cell::from(Span::styled(title_text, style)));
             positions.push((x, width, *col));
             x += width;
         }
@@ -80,13 +83,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         );
 
         let rows = build_rows(app, &ctx, &cols);
-        (
-            rows,
-            constraints,
-            Row::new(vec![Line::from(header_cells)]),
-            positions,
-            title,
-        )
+        (rows, constraints, Row::new(header_cells), positions, title)
     };
 
     app.header_cells = header_cells;
@@ -131,7 +128,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn build_rows(app: &App, ctx: &DisplayCtx<'_>, cols: &[ColumnId]) -> Vec<Row<'static>> {
     let mut rows: Vec<Row> = Vec::with_capacity(64);
-    let body_height = app.table_area.height.saturating_sub(2) as usize;
+    let body_height = app.table_area.height.saturating_sub(3) as usize;
     let end = (app.offset + body_height).min(app.display.len());
     let search = app.search.as_ref();
 

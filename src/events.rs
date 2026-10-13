@@ -643,8 +643,9 @@ fn handle_left_click(app: &mut App, x: u16, y: u16, mods: KeyModifiers) {
         .unwrap_or(false);
     app.last_click = Some((now, x, y));
 
-    if y == area.y {
-        // Header: sort by the clicked column; Shift appends a sort key.
+    if y == area.y + 1 {
+        // Header row (inside the top border): sort by the clicked column;
+        // Shift appends a sort key.
         for (hx, hw, col) in &app.header_cells {
             if x >= *hx && x < *hx + *hw {
                 let col = *col;

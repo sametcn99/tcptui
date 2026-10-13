@@ -2505,12 +2505,13 @@ impl App {
     }
 
     /// Screen-space row index for a mouse click inside the table body.
+    /// Layout inside the table area: border, header row, data rows, border.
     pub fn row_at_screen_y(&self, y: u16) -> Option<usize> {
         let area = self.table_area;
-        if area.height == 0 || y <= area.y || y >= area.y + area.height {
+        if area.height <= 3 || y < area.y + 2 || y >= area.y + area.height - 1 {
             return None;
         }
-        let idx = self.offset + (y - area.y - 1) as usize;
+        let idx = self.offset + (y - area.y - 2) as usize;
         (idx < self.display.len()).then_some(idx)
     }
 }

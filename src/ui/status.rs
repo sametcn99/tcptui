@@ -92,15 +92,6 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             format!(" {msg}"),
             Style::default().fg(app.theme.changed),
         )),
-        None if !app.alert_pending.is_empty() => Line::from(Span::styled(
-            format!(
-                " ⚠ {} (x clears)",
-                app.alert_pending.last().unwrap_or(&String::new())
-            ),
-            Style::default()
-                .fg(app.theme.deleted)
-                .add_modifier(Modifier::BOLD),
-        )),
         None => Line::from(Span::styled(
             " ?:help  /:filter  1-8:presets  o:sort  B:chart  A:rules  c:close  K:kill  e:export  q:quit",
             Style::default().fg(app.theme.dim),
@@ -129,8 +120,39 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(app.theme.dim),
     ));
 
-    let mut lines = vec![top, bottom];
-    if area.height >= 2 {
+    // Pending alerts get their own dedicated line above the hints so the
+    // shortcut bar and statistics stay visible while an alert is live.
+    let alert_line = (!app.alert_pending.is_empty()).then(|| {
+        let last = app.alert_pending.last().cloned().unwrap_or_default();
+        let text = format!(
+            " ⚠ {} alert(s) — {} (x clears)",
+            app.alert_pending.len(),
+            last
+        );
+        Line::from(Span::styled(
+            truncate_chars(&text, area.width as usize),
+            Style::default()
+                .fg(app.theme.deleted)
+                .add_modifier(Modifier::BOLD),
+        ))
+    });
+
+    let mut lines = Vec::with_capacity(3);
+    if let Some(alert) = alert_line {
+        lines.push(alert);
+    }
+    lines.push(top);
+    lines.push(bottom);
+    if !lines.is_empty() {
         f.render_widget(Paragraph::new(std::mem::take(&mut lines)), area);
     }
+}
+
+/// Clip a string to `max` characters (unicode safe), with an ellipsis.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+    format!("{cut}…")
 }

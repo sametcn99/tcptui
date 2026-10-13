@@ -11,10 +11,13 @@ use crate::app::{App, Mode};
 
 /// Render the whole interface for the current state.
 pub fn draw(f: &mut Frame, app: &mut App) {
+    // Pending alerts get a dedicated footer line so the shortcut hints and
+    // statistics never get covered up.
+    let footer_height = if app.alert_pending.is_empty() { 2 } else { 3 };
     let chunks = Layout::vertical([
-        Constraint::Length(1), // title bar
-        Constraint::Min(3),    // table
-        Constraint::Length(2), // footer
+        Constraint::Length(1),             // title bar
+        Constraint::Min(3),                // table
+        Constraint::Length(footer_height), // footer (hints + stats [+ alert])
     ])
     .split(f.area());
 
@@ -77,6 +80,33 @@ mod tests {
         });
         let area = ratatui::layout::Rect::new(0, 0, 120, 30);
         handle_event(app, ev, area);
+    }
+
+    #[test]
+    fn alert_footer_line_does_not_cover_hints() {
+        let mut app = App::new(Config::default(), None);
+        app.apply_snapshot(synthetic_snapshot());
+        app.alert_pending
+            .push("ALERT 'process=x' matched TCP 1.2.3.4:1 -> 5.6.7.8:2 (proc.exe)".into());
+
+        let backend = ratatui::backend::TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+
+        // The alert gets its own line while hints and stats stay visible.
+        assert!(text.contains("alert(s)"), "alert line missing");
+        assert!(text.contains("?:help"), "shortcut hints were covered");
+        assert!(text.contains("total 2"), "statistics line was covered");
+        // Long alert text is truncated to the terminal width, not wrapped.
+        let alert_rows: Vec<&str> = text.lines().filter(|l| l.contains("alert(s)")).collect();
+        assert_eq!(alert_rows.len(), 1);
     }
 
     #[test]

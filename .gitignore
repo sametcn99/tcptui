@@ -2,3 +2,4 @@
 *.exe
 *.pdb
 .zcode/
+_patch*.py

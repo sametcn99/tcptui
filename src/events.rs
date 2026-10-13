@@ -52,6 +52,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
         Mode::Chart => chart_key(app, code),
         Mode::Rules => rules_key(app, code),
         Mode::Profiles => profiles_key(app, code),
+        Mode::ContextMenu => context_menu_key(app, code),
         Mode::Settings => settings_key(app, code),
         Mode::Vt => {
             let mut scroll = app.vt_state.as_ref().map_or(0, |v| v.scroll);
@@ -61,6 +62,27 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers, viewport: Rect) 
             }
         }
         Mode::Normal => normal_mode_key(app, code, ctrl, shift, viewport),
+    }
+}
+
+/// Right-click context menu.
+fn context_menu_key(app: &mut App, code: KeyCode) {
+    let len = app.ctx_menu.len();
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.mode = Mode::Normal;
+            app.ctx_menu.clear();
+        }
+        KeyCode::Up | KeyCode::Char('k') => app.ctx_cursor = app.ctx_cursor.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.ctx_cursor = (app.ctx_cursor + 1).min(len.saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            if let Some(item) = app.ctx_menu.get(app.ctx_cursor).copied() {
+                app.run_context_item(item);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -107,6 +129,29 @@ fn profiles_key(app: &mut App, code: KeyCode) {
 
 /// Settings popup (M): live-edit view preferences, persisted on close.
 fn settings_key(app: &mut App, code: KeyCode) {
+    // Active path input (GeoIP row) takes all keys.
+    if let Some(input) = app.settings_input.as_mut() {
+        match code {
+            KeyCode::Enter => {
+                let path = input.value.trim().to_string();
+                app.geoip_path = path.clone();
+                app.geoip_enabled = true;
+                if app.geoip_try_enable(&path) {
+                    app.push_status("GeoIP enabled");
+                } else {
+                    app.push_status(format!("GeoIP database not found: {path}"));
+                }
+                app.settings_input = None;
+                app.save_config();
+            }
+            KeyCode::Esc => app.settings_input = None,
+            KeyCode::Backspace => input.backspace(),
+            KeyCode::Char(c) => input.push(c),
+            _ => {}
+        }
+        return;
+    }
+
     let count = app.settings_count();
     match code {
         KeyCode::Esc | KeyCode::Char('q') => {
@@ -122,6 +167,11 @@ fn settings_key(app: &mut App, code: KeyCode) {
         KeyCode::Char(' ') | KeyCode::Enter => app.settings_activate(),
         KeyCode::Char('+') | KeyCode::Char('=') => app.settings_adjust(true),
         KeyCode::Char('-') | KeyCode::Char('_') => app.settings_adjust(false),
+        KeyCode::Char('e') if app.settings_cursor == 9 => {
+            app.settings_input = Some(crate::app::InputLine {
+                value: app.geoip_path.clone(),
+            });
+        }
         _ => {}
     }
 }
@@ -549,6 +599,27 @@ fn export_key(app: &mut App, code: KeyCode) {
 }
 
 fn stats_log_key(app: &mut App, code: KeyCode) {
+    // Active log-filter input takes all keys.
+    if app.mode == Mode::Log
+        && let Some(input) = app.log_input.as_mut()
+    {
+        match code {
+            KeyCode::Enter => {
+                let text = input.value.trim().to_string();
+                app.log_filter = if text.is_empty() { None } else { Some(text) };
+                app.log_input = None;
+                app.log_scroll = 0;
+            }
+            KeyCode::Esc => {
+                app.log_input = None;
+                app.log_filter = None;
+            }
+            KeyCode::Backspace => input.backspace(),
+            KeyCode::Char(c) => input.push(c),
+            _ => {}
+        }
+        return;
+    }
     match code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => {
             app.mode = Mode::Normal;
@@ -564,6 +635,14 @@ fn stats_log_key(app: &mut App, code: KeyCode) {
                 app.log_scroll = (app.log_scroll + 1).min(max);
             }
         }
+        KeyCode::Char('/') if app.mode == Mode::Log => {
+            let mut input = crate::app::InputLine::default();
+            if let Some(f) = &app.log_filter {
+                input.value = f.clone();
+            }
+            app.log_input = Some(input);
+        }
+        KeyCode::Char('E') if app.mode == Mode::Log => app.export_log(),
         KeyCode::Char('c') if app.mode == Mode::Log => {
             let text: String = app
                 .event_log
@@ -585,6 +664,25 @@ fn stats_log_key(app: &mut App, code: KeyCode) {
 // ---------------------------------------------------------------------------
 
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    // Column resize drag has priority over everything else.
+    if let Some((col, anchor_x, start_w)) = app.col_resize {
+        match mouse.kind {
+            MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+                let delta = mouse.column as i32 - anchor_x as i32;
+                let next = (start_w as i32 + delta).clamp(3, 80) as u16;
+                app.column_width.insert(col, next);
+                return;
+            }
+            MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                app.col_resize = None;
+                app.save_config();
+                app.push_status("Column width saved");
+                return;
+            }
+            _ => return,
+        }
+    }
+
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             if app.mode == Mode::Normal {
@@ -605,6 +703,16 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             handle_left_click(app, mouse.column, mouse.row, mouse.modifiers);
         }
+        MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
+            if app.mode == Mode::Normal
+                && let Some(idx) = app.row_at_screen_y(mouse.row)
+            {
+                app.selected = idx;
+                app.open_context_menu();
+            }
+        }
+        MouseEventKind::ScrollLeft => app.h_scroll(-8),
+        MouseEventKind::ScrollRight => app.h_scroll(8),
         _ => {}
     }
 }
@@ -649,8 +757,20 @@ fn handle_left_click(app: &mut App, x: u16, y: u16, mods: KeyModifiers) {
     app.last_click = Some((now, x, y));
 
     if y == area.y + 1 {
-        // Header row (inside the top border): sort by the clicked column;
-        // Shift appends a sort key.
+        // Header row (inside the top border). Grabbing a column edge
+        // (within 1 char of its right side) starts a width drag; clicking
+        // the body of a title sorts by it (Shift appends a sort key).
+        for (hx, hw, col) in &app.header_cells {
+            let edge = hx + hw;
+            if x + 1 >= edge && x <= edge + 1 {
+                app.col_resize = Some((
+                    *col,
+                    x,
+                    *app.column_width.get(col).unwrap_or(&col.default_width()),
+                ));
+                return;
+            }
+        }
         for (hx, hw, col) in &app.header_cells {
             if x >= *hx && x < *hx + *hw {
                 let col = *col;

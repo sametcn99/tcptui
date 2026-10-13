@@ -498,6 +498,37 @@ pub enum Mode {
     Profiles,
     Settings,
     Vt,
+    ContextMenu,
+}
+
+/// Entries of the right-click context menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ContextItem {
+    Details,
+    Close,
+    Kill,
+    Whois,
+    Watch,
+    CopyRow,
+    CopyTable,
+    CopyJson,
+    Export,
+}
+
+impl ContextItem {
+    pub fn label(self) -> &'static str {
+        match self {
+            ContextItem::Details => "Process details",
+            ContextItem::Close => "Close connection",
+            ContextItem::Kill => "End process",
+            ContextItem::Whois => "Whois remote address",
+            ContextItem::Watch => "Watch this process",
+            ContextItem::CopyRow => "Copy row",
+            ContextItem::CopyTable => "Copy table (TSV)",
+            ContextItem::CopyJson => "Copy row (JSON)",
+            ContextItem::Export => "Export ...",
+        }
+    }
 }
 
 /// Editable single-line text input (filter/search/...).
@@ -817,6 +848,28 @@ pub struct App {
     /// Re-baseline the EStats counters on the next snapshot after resuming
     /// from pause, so the paused window does not show up as one big spike.
     pub bw_skip_next: bool,
+
+    // Phase G state
+    /// Horizontal scroll offset of the table (in characters).
+    pub scroll_x: u16,
+    /// Maximum useful horizontal scroll (total width - viewport), set while
+    /// rendering.
+    pub h_max: u16,
+    /// Active column-drag resize: (column, anchor screen x, starting width).
+    pub col_resize: Option<(ColumnId, u16, u16)>,
+    /// Right-click context menu entries and cursor.
+    pub ctx_menu: Vec<ContextItem>,
+    pub ctx_cursor: usize,
+    /// Ring the terminal bell on alert fires.
+    pub bell_enabled: bool,
+    /// Configured GeoIP database path (editable in settings).
+    pub geoip_path: String,
+    /// Inline input inside the settings popup (GeoIP path).
+    pub settings_input: Option<InputLine>,
+    /// Inline input inside the event log popup (substring filter).
+    pub log_input: Option<InputLine>,
+    /// Applied event-log substring filter.
+    pub log_filter: Option<String>,
     pub expanded: HashSet<u32>,
 
     // Phase C: geoip, profiles, settings
@@ -1018,6 +1071,16 @@ impl App {
             bw_selected_id: None,
             bw_view: BwView::Total,
             bw_skip_next: false,
+            scroll_x: 0,
+            h_max: 0,
+            col_resize: None,
+            ctx_menu: Vec::new(),
+            ctx_cursor: 0,
+            bell_enabled: config.notifications.bell,
+            geoip_path: config.geoip.path.clone(),
+            settings_input: None,
+            log_input: None,
+            log_filter: None,
             expanded: HashSet::new(),
             geo,
             geoip_enabled,
@@ -1278,6 +1341,13 @@ impl App {
         }
         for msg in &fired {
             self.log_event(msg.clone());
+        }
+        if self.bell_enabled && !fired.is_empty() {
+            // Terminal bell: one ring per snapshot batch.
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(b"\x07");
+            let _ = out.flush();
         }
         self.alert_pending.extend(fired);
         if self.alert_pending.len() > 100 {
@@ -2148,7 +2218,7 @@ impl App {
 
     /// Number of rows in the settings popup.
     pub fn settings_count(&self) -> usize {
-        10
+        11
     }
 
     /// Toggle/cycle the setting under the cursor.
@@ -2191,13 +2261,16 @@ impl App {
             9 => {
                 self.geoip_enabled = !self.geoip_enabled;
                 if self.geoip_enabled {
-                    let path = crate::config::GeoIpConfig::default().path;
+                    let path = self.geoip_path.clone();
                     if !self.geoip_try_enable(&path) {
                         self.push_status(format!("GeoIP database not found: {path}"));
                     }
                 } else {
                     self.geoip_disable();
                 }
+            }
+            10 => {
+                self.bell_enabled = !self.bell_enabled;
             }
             _ => {}
         }
@@ -2501,6 +2574,164 @@ impl App {
         self.refresh_display();
     }
 
+    /// Horizontal scroll by `delta` characters, clamped to the render-time
+    /// maximum.
+    pub fn h_scroll(&mut self, delta: i32) {
+        let next = self.scroll_x as i32 + delta;
+        self.scroll_x = next.clamp(0, self.h_max as i32) as u16;
+    }
+
+    /// Which columns are visible at the current horizontal scroll.
+    /// Pure windowing math: returns (first visible column index, characters
+    /// cut from its left side, how many columns fit the viewport).
+    pub fn column_window(widths: &[u16], scroll_x: u16, viewport: u16) -> (usize, u16, usize) {
+        let mut skip = scroll_x as u32;
+        let mut start = widths.len();
+        let mut cut = 0u16;
+        for (i, w) in widths.iter().enumerate() {
+            if skip < *w as u32 {
+                start = i;
+                cut = skip as u16;
+                break;
+            }
+            skip -= *w as u32;
+        }
+        if start >= widths.len() {
+            // Scrolled past everything: pin to the last column.
+            return (widths.len().saturating_sub(1), 0, 1);
+        }
+        let count = Self::count_fitting(&widths[start..], cut, viewport);
+        (start, cut, count.max(1))
+    }
+
+    fn count_fitting(widths: &[u16], cut: u16, viewport: u16) -> usize {
+        let mut used = 0u32;
+        let mut n = 0usize;
+        for (i, w) in widths.iter().enumerate() {
+            let eff = if i == 0 {
+                (*w as u32).saturating_sub(cut as u32)
+            } else {
+                *w as u32
+            };
+            if n > 0 && used + eff > viewport as u32 {
+                break;
+            }
+            used += eff;
+            n += 1;
+            if used >= viewport as u32 {
+                break;
+            }
+        }
+        n
+    }
+
+    /// Open the right-click context menu for the current selection.
+    pub fn open_context_menu(&mut self) {
+        let items = if self.current_row().is_some() || self.selected_group().is_some() {
+            vec![
+                ContextItem::Details,
+                ContextItem::Close,
+                ContextItem::Kill,
+                ContextItem::Whois,
+                ContextItem::Watch,
+                ContextItem::CopyRow,
+                ContextItem::CopyTable,
+                ContextItem::CopyJson,
+                ContextItem::Export,
+            ]
+        } else {
+            Vec::new()
+        };
+        self.ctx_menu = items;
+        self.ctx_cursor = 0;
+        self.mode = Mode::ContextMenu;
+    }
+
+    /// Execute a context-menu entry.
+    pub fn run_context_item(&mut self, item: ContextItem) {
+        self.mode = Mode::Normal;
+        match item {
+            ContextItem::Details => {
+                if let Some((pid, _)) = self.selected_group() {
+                    self.detail_pid = Some(pid);
+                    self.detail_lines = self.build_detail_lines(pid);
+                    self.detail_scroll = 0;
+                    self.mode = Mode::ProcessDetail;
+                } else {
+                    self.begin_detail();
+                }
+            }
+            ContextItem::Close => self.begin_confirm_close(),
+            ContextItem::Kill => self.begin_confirm_kill(),
+            ContextItem::Whois => self.request_whois(),
+            ContextItem::Watch => self.toggle_watch(),
+            ContextItem::CopyRow => self.copy_current_row(),
+            ContextItem::CopyTable => self.copy_table(),
+            ContextItem::CopyJson => self.copy_row_json(),
+            ContextItem::Export => self.mode = Mode::Export,
+        }
+    }
+
+    /// Copy the selected (or the selected group's first) row as JSON.
+    pub fn copy_row_json(&mut self) {
+        let target_pid = self
+            .current_row()
+            .map(|r| r.pid)
+            .or_else(|| self.selected_group().map(|(pid, _)| pid));
+        let (headers, rows) = self.export_headers_and_rows(false);
+        let idx = target_pid.and_then(|pid| self.visible.iter().position(|r| r.pid == pid));
+        match idx {
+            Some(i) if i < rows.len() => {
+                let single = vec![rows[i].clone()];
+                match crate::export::render(&headers, &single, crate::export::ExportFormat::Json) {
+                    Ok(text) => match crate::clipboard::copy_text(&text) {
+                        Ok(()) => self.push_status("Row copied as JSON"),
+                        Err(e) => self.push_status(format!("Clipboard error: {e}")),
+                    },
+                    Err(e) => self.push_status(format!("JSON error: {e}")),
+                }
+            }
+            _ => self.push_status("Nothing selected"),
+        }
+    }
+
+    /// Entries surviving the active log filter (case-insensitive substring).
+    pub fn filtered_log(&self) -> Vec<&EventEntry> {
+        match &self.log_filter {
+            Some(f) => {
+                let needle = f.to_lowercase();
+                self.event_log
+                    .iter()
+                    .filter(|e| e.message.to_lowercase().contains(&needle))
+                    .collect()
+            }
+            None => self.event_log.iter().collect(),
+        }
+    }
+
+    /// Write the (filtered) event log to disk.
+    pub fn export_log(&mut self) {
+        let entries = self.filtered_log();
+        let text: String = entries
+            .iter()
+            .map(|e| format!("{}  {}", e.at.format("%Y-%m-%d %H:%M:%S"), e.message))
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let name = format!("tcptui-events-{ts}.txt");
+        match crate::export::write_file(std::path::Path::new(&name), &text) {
+            Ok(path) => self.push_status(format!(
+                "Exported {} events to {}",
+                entries.len(),
+                path.display()
+            )),
+            Err(e) => self.push_status(format!("Export failed: {e}")),
+        }
+    }
+
     /// Freeze or resume live updates (p).
     pub fn toggle_pause(&mut self) {
         self.paused = !self.paused;
@@ -2566,6 +2797,8 @@ impl App {
             .collect();
         cfg.estats.enabled = self.estats_enabled;
         cfg.geoip.enabled = self.geoip_enabled;
+        cfg.geoip.path = self.geoip_path.clone();
+        cfg.notifications.bell = self.bell_enabled;
         cfg.profiles = self.profiles.clone();
         cfg.set_column_layout(&self.column_order, &self.column_hidden, &self.column_width);
         cfg.alerts = self
@@ -3219,6 +3452,104 @@ mod phase_f_tests {
         app.request_whois();
         assert_eq!(app.mode, Mode::Whois);
         assert!(app.whois.is_some());
+        let _ = v4(127, 0, 0, 1);
+    }
+}
+
+#[cfg(test)]
+mod phase_g_tests {
+    use super::tests::{synthetic_snapshot_like, v4};
+    use super::*;
+
+    #[test]
+    fn column_window_math() {
+        let widths = [10u16, 20, 30, 40];
+        // No scroll: everything fits a large viewport.
+        assert_eq!(App::column_window(&widths, 0, 200), (0, 0, 4));
+        // Scroll into the second column: starts at col 1 with a cut of 5.
+        assert_eq!(App::column_window(&widths, 15, 200), (1, 5, 3));
+        // Scroll past everything clamps to the last column.
+        assert_eq!(App::column_window(&widths, 500, 200), (3, 0, 1));
+        // Narrow viewport: only the columns that fit are included.
+        let (start, cut, count) = App::column_window(&widths, 0, 55);
+        assert_eq!((start, cut), (0, 0));
+        assert!(count < 4);
+    }
+
+    #[test]
+    fn horizontal_scroll_clamps_and_hints() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        app.apply_snapshot(synthetic_snapshot_like());
+        app.h_max = 100;
+        app.h_scroll(8);
+        assert_eq!(app.scroll_x, 8);
+        app.h_scroll(-100);
+        assert_eq!(app.scroll_x, 0);
+        app.h_scroll(1000);
+        assert_eq!(app.scroll_x, 100);
+    }
+
+    #[test]
+    fn context_menu_opens_and_runs() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        app.apply_snapshot(synthetic_snapshot_like());
+        app.selected = 0;
+        app.open_context_menu();
+        assert_eq!(app.mode, Mode::ContextMenu);
+        assert_eq!(app.ctx_menu.len(), 9);
+
+        // Navigate to "Copy table" and run it.
+        for item in app.ctx_menu.clone() {
+            if item == ContextItem::CopyTable {
+                break;
+            }
+            app.ctx_cursor += 1;
+        }
+        app.run_context_item(ContextItem::CopyTable);
+        assert_eq!(app.mode, Mode::Normal);
+
+        // Empty selection yields an empty menu.
+        app.display.clear();
+        app.open_context_menu();
+        assert!(app.ctx_menu.is_empty());
+        app.mode = Mode::Normal;
+    }
+
+    #[test]
+    fn bell_setting_roundtrips() {
+        let mut cfg = crate::config::Config::default();
+        assert!(!cfg.notifications.bell);
+        cfg.notifications.bell = true;
+        let back: crate::config::Config =
+            toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert!(back.notifications.bell);
+    }
+
+    #[test]
+    fn geoip_path_persists_through_config() {
+        let mut cfg = crate::config::Config::default();
+        cfg.geoip.path = "D:/dbs/GeoLite2-Country.mmdb".into();
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        assert!(text.contains("D:/dbs/GeoLite2-Country.mmdb"));
+        let back: crate::config::Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.geoip.path, "D:/dbs/GeoLite2-Country.mmdb");
+    }
+
+    #[test]
+    fn log_filter_and_export_name() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        app.log_event("OPEN   TCP a".into());
+        app.log_event("CLOSE  TCP b".into());
+        app.log_event("USER   closed connection".into());
+        assert_eq!(app.filtered_log().len(), 3);
+        app.log_filter = Some("close".into());
+        let filtered = app.filtered_log();
+        assert_eq!(filtered.len(), 2);
+        assert!(
+            filtered
+                .iter()
+                .all(|e| e.message.to_lowercase().contains("close"))
+        );
         let _ = v4(127, 0, 0, 1);
     }
 }

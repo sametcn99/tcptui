@@ -3,6 +3,33 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-10-13
+
+### Added
+- Horizontal scrolling in the main table (Shift + mouse wheel): columns
+  keep their exact widths instead of being squeezed, with scroll arrows
+  in the block title hinting more content.
+- Right-click context menu (details, close, kill, whois, watch, copy
+  row/table/JSON, export).
+- Column widths are now resizable by dragging the header edge with the
+  mouse (persisted on release).
+- Terminal bell option for alert rules ([notifications] bell, settings).
+- GeoIP database path editable in the settings screen and persisted
+  (previously the configured path was never written back).
+- Event log: inline substring filter (/) and export to a timestamped
+  text file (E).
+
+### Fixed
+- Bandwidth chart no longer spikes after unpausing (baseline refresh).
+- Group nodes are actionable: Enter expands/collapses, K kills the
+  grouped process, w/V target the group, process details work from the
+  group header.
+- Reverse DNS runs one thread per lookup; a slow DNS server cannot stall
+  the resolution queue.
+- tcpvcon --filter accepts the structured filter language (both
+  --filter=EXPR and two-token form).
+- compile_error! with a clear message on non-Windows targets.
+
 ## [1.1.0] - 2026-10-13
 
 ### Added

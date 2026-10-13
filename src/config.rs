@@ -170,6 +170,14 @@ pub struct VirusTotalConfig {
     pub api_key: String,
 }
 
+/// Terminal-level notification preferences.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    /// Ring the terminal bell when an alert rule fires.
+    pub bell: bool,
+}
+
 /// Experimental ETW connection-event mode.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -233,6 +241,9 @@ pub struct Config {
     /// Optional VirusTotal integration.
     #[serde(default)]
     pub virustotal: VirusTotalConfig,
+    /// Terminal notifications.
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
 }
 
 /// `%APPDATA%\tcptui\config.toml`.

@@ -161,9 +161,10 @@ mod tests {
             );
         }
 
-        // Click the PID header (gutter 2 + process 16 -> PID starts at
-        // x = 1 + 2 + 16 + 4, on the header row y = table.y + 1 = 2).
-        let pid_header_x = 1 + 2 + 16 + 5;
+        // Click the middle of the PID header title (gutter 2 + process 16
+        // -> PID spans x 19..25 on the header row y = table.y + 1 = 2);
+        // its right edge is the resize grab zone.
+        let pid_header_x = 21;
         let click = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
             column: pid_header_x,

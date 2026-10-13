@@ -45,6 +45,7 @@ pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
         Mode::Chart => draw_chart(f, app, area),
         Mode::Rules => draw_rules(f, app, area),
         Mode::Profiles => draw_profiles(f, app, area),
+        Mode::ContextMenu => draw_context_menu(f, app, area),
         Mode::Settings => draw_settings(f, app, area),
         Mode::Vt => draw_vt(f, app, area),
         _ => {}
@@ -507,13 +508,13 @@ fn draw_stats(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_log(f: &mut Frame, app: &App, area: Rect) {
     let rect = centered_rect(80, 80, area);
-    let total = app.event_log.len();
+    let entries = app.filtered_log();
+    let total = entries.len();
     let height = rect.height.saturating_sub(2) as usize;
     // Keep the newest entries visible; respect manual scrolling.
     let max_scroll = total.saturating_sub(height);
     let scroll = app.log_scroll.min(max_scroll);
-    let visible_slice: Vec<ListItem> = app
-        .event_log
+    let visible_slice: Vec<ListItem> = entries
         .iter()
         .skip(scroll)
         .take(height)
@@ -531,8 +532,21 @@ fn draw_log(f: &mut Frame, app: &App, area: Rect) {
             )))
         })
         .collect();
-    let list = List::new(visible_slice).block(popup_block(
-        &format!("Event log — {total} entries (c: copy, j/k: scroll, Esc: close)"),
+    let filter_desc = app
+        .log_filter
+        .as_deref()
+        .map(|f| format!(" filter:{f}"))
+        .unwrap_or_default();
+    let mut items = visible_slice;
+    if let Some(input) = &app.log_input {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("filter> ", Style::default().fg(app.theme.accent)),
+            Span::raw(input.value.clone()),
+            Span::styled("▏", Style::default().fg(app.theme.dim)),
+        ])));
+    }
+    let list = List::new(items).block(popup_block(
+        &format!("Event log — {total} entries{filter_desc} (/ filter, E export, c copy)"),
         app,
     ));
     f.render_widget(Clear, rect);
@@ -819,9 +833,9 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     let rect = centered_rect(55, 60, area);
 
     let geo_state = match (&app.geo, app.geoip_enabled) {
-        (Some(_), _) => "on (database loaded)",
-        (None, true) => "on (database missing)",
-        (None, false) => "off",
+        (Some(_), _) => format!("on — {}", app.geoip_path),
+        (None, true) => format!("on (db missing) — {}", app.geoip_path),
+        (None, false) => "off".to_string(),
     };
     let rows: Vec<(&str, String)> = vec![
         (
@@ -839,7 +853,8 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
         ("Grouped view", on_off(app.grouped)),
         ("Theme", app.theme_name.clone()),
         ("EStats byte counters", on_off(app.estats_enabled)),
-        ("GeoIP country column", geo_state.to_string()),
+        ("GeoIP country column", geo_state),
+        ("Bell on alerts", on_off(app.bell_enabled)),
     ];
 
     let mut items: Vec<ListItem> = Vec::new();
@@ -858,10 +873,22 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
         ))));
     }
     items.push(ListItem::new(Line::from("")));
-    items.push(ListItem::new(Line::from(Span::styled(
-        "Space/Enter:toggle  +/-:adjust  Esc:close&save",
-        Style::default().fg(app.theme.changed),
-    ))));
+    if let Some(input) = &app.settings_input {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("geoip path> ", Style::default().fg(app.theme.accent)),
+            Span::raw(input.value.clone()),
+            Span::styled("▏", Style::default().fg(app.theme.dim)),
+        ])));
+        items.push(ListItem::new(Line::from(Span::styled(
+            "(Enter applies and tries to open the database, Esc cancels)",
+            Style::default().fg(app.theme.dim),
+        ))));
+    } else {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "Space/Enter:toggle  +/-:adjust  e:edit GeoIP path  Esc:close&save",
+            Style::default().fg(app.theme.changed),
+        ))));
+    }
 
     let list = List::new(items).block(popup_block("Settings", app));
     f.render_widget(Clear, rect);
@@ -874,6 +901,34 @@ fn on_off(b: bool) -> String {
     } else {
         "off".to_string()
     }
+}
+
+/// Right-click context menu.
+fn draw_context_menu(f: &mut Frame, app: &App, area: Rect) {
+    let rect = centered_rect(35, 45, area);
+    let mut items: Vec<ListItem> = Vec::new();
+    for (idx, item) in app.ctx_menu.iter().enumerate() {
+        let style = if idx == app.ctx_cursor {
+            Style::default()
+                .fg(app.theme.selected_fg)
+                .bg(app.theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.normal)
+        };
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!(" {}", item.label()),
+            style,
+        ))));
+    }
+    items.push(ListItem::new(Line::from("")));
+    items.push(ListItem::new(Line::from(Span::styled(
+        "Enter:run  Esc:close",
+        Style::default().fg(app.theme.changed),
+    ))));
+    let list = List::new(items).block(popup_block("Actions", app));
+    f.render_widget(Clear, rect);
+    f.render_widget(list, rect);
 }
 
 /// VirusTotal report popup (`V`).

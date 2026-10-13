@@ -29,7 +29,8 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 - All TCP/UDP endpoints, IPv4 + IPv6, with owning process, PID, hosted service, user account and Authenticode signature status
 - TCPView-style change highlighting: new endpoints **green**, deleted **red**, state-changed **yellow**
 - Age column (first-seen timestamps); with the experimental ETW mode these are true connect times
-- Adjustable refresh rate (250 ms – 60 s, default 1 s), manual refresh (`F5`)
+- Adjustable refresh rate (250 ms – 60 s, default 1 s), manual refresh (`F5`),
+  pause/resume live updates (`p`) to freeze the table for inspection
 - Statistics popup (`i`) with totals and top processes by count and by traffic
 - Optional GeoIP country column with flags (see below)
 - Experimental ETW mode (`--etw`): real connect/disconnect events, transient connection logging
@@ -64,6 +65,7 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 | `P` · `M` · `C` | View profiles · settings · column setup |
 | `t` · `u` · `U` · `L` · `r` | TCP · UDP · unconnected · loopback · resolve toggles |
 | `G` · `F5` · `F6` | Group view · refresh now · watch process |
+| `p` | Pause / resume live updates (freeze the table for inspection) |
 | `c` · `K` · `w` · `V` · `e` | Close connection · end process · whois · VirusTotal · export |
 | `Space` · Shift+arrows | Mark rows · mark a range |
 | `i` · `g` · `x` | Statistics · event log · clear marks/alerts/filter |

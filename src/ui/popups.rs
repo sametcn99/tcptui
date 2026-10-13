@@ -113,6 +113,7 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("r", "toggle hostname resolution"),
         ("G", "toggle grouped-by-process view"),
         ("+ / -", "refresh interval faster/slower"),
+        ("p", "pause/resume live updates"),
         ("F5", "refresh now"),
         ("F6", "watch selected process"),
         ("C", "column setup (show/hide, width, order)"),

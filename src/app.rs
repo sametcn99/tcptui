@@ -783,6 +783,8 @@ pub struct App {
     // View state
     pub toggles: ViewToggles,
     pub refresh_interval: Duration,
+    /// Live updates frozen (p toggles); snapshots are dropped while on.
+    pub paused: bool,
     pub filter: Option<FilterKind>,
     pub filter_input: InputLine,
     pub search: Option<FilterKind>,
@@ -991,6 +993,7 @@ impl App {
                 resolve: config.view.resolve_addresses,
             },
             refresh_interval: interval,
+            paused: false,
             filter: None,
             filter_input: InputLine::default(),
             filter_history: Vec::new(),
@@ -1189,6 +1192,9 @@ impl App {
     // -- Snapshot application ------------------------------------------------
 
     pub fn apply_snapshot(&mut self, snap: Snapshot) {
+        if self.paused {
+            return; // frozen view: snapshots are dropped until resumed
+        }
         // Event log: TCP open/close transitions (skip ghosts and first pass).
         if !self.rows.is_empty() {
             let mut events: Vec<String> = Vec::new();
@@ -2429,6 +2435,16 @@ impl App {
         self.refresh_display();
     }
 
+    /// Freeze or resume live updates (p).
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+        self.push_status(if self.paused {
+            "Refresh paused — press p to resume".to_string()
+        } else {
+            "Refresh resumed".to_string()
+        });
+    }
+
     pub fn toggle_resolve(&mut self) {
         self.toggles.resolve = !self.toggles.resolve;
         self.push_status(if self.toggles.resolve {
@@ -3027,6 +3043,27 @@ mod phase_d_tests {
                 .iter()
                 .any(|e| e.message.contains("transient"))
         );
+    }
+
+    #[test]
+    fn pause_freezes_and_resume_applies_snapshots() {
+        let mut app = App::new(crate::config::Config::default(), None);
+
+        app.toggle_pause();
+        assert!(app.paused);
+        app.apply_snapshot(synthetic_snapshot_like());
+        assert!(
+            app.rows.is_empty(),
+            "snapshots must be dropped while paused"
+        );
+        assert_eq!(app.snapshot_count, 0);
+
+        app.toggle_pause();
+        assert!(!app.paused);
+        app.apply_snapshot(synthetic_snapshot_like());
+        assert_eq!(app.rows.len(), 2);
+        assert_eq!(app.snapshot_count, 1);
+        assert_eq!(app.stats.total, 2);
     }
 
     #[test]

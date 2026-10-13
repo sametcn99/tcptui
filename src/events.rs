@@ -305,7 +305,12 @@ fn shared_normal_key(app: &mut App, code: KeyCode, page: usize) {
         }
         KeyCode::Char('+') | KeyCode::Char('=') => app.step_interval(false),
         KeyCode::Char('-') | KeyCode::Char('_') => app.step_interval(true),
-        KeyCode::F(5) => app.request_refresh(),
+        KeyCode::Char('p') => app.toggle_pause(),
+        KeyCode::F(5) => {
+            if !app.paused {
+                app.request_refresh();
+            }
+        }
         KeyCode::F(6) => app.toggle_watch(),
         KeyCode::Char('G') => app.toggle_grouped(),
         KeyCode::Char('c') => app.begin_confirm_close(),

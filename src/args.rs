@@ -16,6 +16,8 @@ OPTIONS:
         --interval <MS>     Snapshot refresh interval in milliseconds
                             (250..=60000, default 1000)
         --no-resolve        Start with hostname resolution disabled
+        --etw               Experimental: real connection events via ETW
+                            (requires an elevated terminal)
         --filter <TEXT>     Apply a filter at startup. Supports plain text,
                             're:' regex prefix, or field expressions such as
                             'process=chrome and state=established' (fields:
@@ -40,6 +42,7 @@ KEYS (inside the TUI):
 pub struct CliOpts {
     pub interval_ms: Option<u64>,
     pub no_resolve: bool,
+    pub etw: bool,
     pub filter: Option<String>,
     pub tcp_only: bool,
     pub udp_only: bool,
@@ -58,7 +61,10 @@ pub enum ParseOutcome {
 /// Parse `std::env::args()`. Unknown flags are reported as errors; a
 /// standalone `-` or non-flag argument is ignored for future positional use.
 pub fn parse(args: &[String]) -> Result<(CliOpts, ParseOutcome), String> {
-    let mut opts = CliOpts::default();
+    let mut opts = CliOpts {
+        etw: false,
+        ..CliOpts::default()
+    };
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -72,6 +78,7 @@ pub fn parse(args: &[String]) -> Result<(CliOpts, ParseOutcome), String> {
             "-h" | "--help" => opts.help = true,
             "-V" | "--version" => opts.version = true,
             "--no-resolve" => opts.no_resolve = true,
+            "--etw" => opts.etw = true,
             "--tcp" => opts.tcp_only = true,
             "--udp" => opts.udp_only = true,
             "--interval" => {

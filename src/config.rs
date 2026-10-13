@@ -163,6 +163,13 @@ impl Default for GeoIpConfig {
     }
 }
 
+/// Experimental ETW connection-event mode.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EtwConfig {
+    pub enabled: bool,
+}
+
 /// A named view: filter + sort chain + visibility toggles, applied as one.
 /// Column layout is deliberately global and not part of profiles.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -213,6 +220,9 @@ pub struct Config {
     /// Named view profiles.
     #[serde(default)]
     pub profiles: Vec<ProfileSerde>,
+    /// Experimental ETW mode.
+    #[serde(default)]
+    pub etw: EtwConfig,
 }
 
 /// `%APPDATA%\tcptui\config.toml`.

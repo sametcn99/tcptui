@@ -13,6 +13,7 @@ pub mod args;
 pub mod clipboard;
 pub mod config;
 pub mod dns;
+pub mod etw;
 pub mod events;
 pub mod export;
 pub mod filter;

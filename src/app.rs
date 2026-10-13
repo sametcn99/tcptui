@@ -817,6 +817,16 @@ pub struct App {
     pub profile_input: Option<InputLine>,
     pub settings_cursor: usize,
 
+    // Experimental ETW mode (Phase D)
+    /// Keep-alive for the ETW session; dropping it stops the session.
+    pub etw_session: Option<crate::etw::EtwSession>,
+    pub etw_rx: Option<std::sync::mpsc::Receiver<crate::etw::EtwEvent>>,
+    /// Connect timestamps seen via ETW, used to correct `first_seen`.
+    pub etw_connects: HashMap<RowId, DateTime<Local>>,
+
+    // Authenticode cache (Phase D)
+    pub signed_cache: HashMap<String, Option<bool>>,
+
     // Columns
     pub column_order: Vec<ColumnId>,
     pub column_hidden: HashSet<ColumnId>,
@@ -861,7 +871,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Config) -> App {
+    pub fn new(
+        config: Config,
+        etw_rx: Option<std::sync::mpsc::Receiver<crate::etw::EtwEvent>>,
+    ) -> App {
         let (collector_tx, collector_rx_cmd) = std::sync::mpsc::channel();
         let (msg_tx, collector_rx) = std::sync::mpsc::channel();
         let (dns_tx, dns_rx) = std::sync::mpsc::channel();
@@ -995,6 +1008,10 @@ impl App {
             profile_cursor: 0,
             profile_input: None,
             settings_cursor: 0,
+            etw_session: None,
+            etw_rx,
+            etw_connects: HashMap::new(),
+            signed_cache: HashMap::new(),
             column_order,
             column_hidden,
             column_width,
@@ -1079,6 +1096,57 @@ impl App {
                 }
             }
         }
+        let mut etw_events = Vec::new();
+        if let Some(rx) = &self.etw_rx {
+            while let Ok(event) = rx.try_recv() {
+                etw_events.push(event);
+            }
+        }
+        for event in etw_events {
+            self.handle_etw_event(event);
+        }
+    }
+
+    /// Apply one ETW event: remember connect timestamps, log connections
+    /// that closed before any snapshot could see them.
+    pub(crate) fn handle_etw_event(&mut self, event: crate::etw::EtwEvent) {
+        use crate::etw::EtwEvent;
+        match event {
+            EtwEvent::Connect {
+                pid, local, remote, ..
+            } => {
+                let id = RowId {
+                    protocol: Protocol::Tcp,
+                    local,
+                    remote: Some(remote),
+                    pid,
+                };
+                self.etw_connects.insert(id, Local::now());
+            }
+            EtwEvent::Disconnect {
+                pid, local, remote, ..
+            } => {
+                let id = RowId {
+                    protocol: Protocol::Tcp,
+                    local,
+                    remote: Some(remote),
+                    pid,
+                };
+                if let Some(opened) = self.etw_connects.remove(&id) {
+                    // Rows already visible are closed by the snapshot diff;
+                    // anything else lived entirely between two snapshots.
+                    let known = self.rows.iter().any(|r| r.id == id);
+                    if !known {
+                        let lived = Local::now()
+                            .signed_duration_since(opened)
+                            .num_milliseconds();
+                        self.log_event(format!(
+                            "OPEN+CLOSE (transient, {lived} ms) tcp {local} -> {remote} pid {pid}"
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     // -- Snapshot application ------------------------------------------------
@@ -1121,7 +1189,14 @@ impl App {
             }
         }
 
-        self.rows = merge_snapshots(&self.rows, snap.rows);
+        let mut rows = merge_snapshots(&self.rows, snap.rows);
+        // ETW knows the real connect time even when the snapshot is late.
+        for row in rows.iter_mut() {
+            if let Some(opened) = self.etw_connects.get(&row.id).copied() {
+                row.first_seen = Some(opened);
+            }
+        }
+        self.rows = rows;
         self.processes = snap.processes;
         self.services = snap.services;
         self.stats = Stats::from_rows(&self.rows);
@@ -2065,7 +2140,7 @@ impl App {
 
     /// Build process detail popup content (path, cmdline, user, services,
     /// per-process connections, usage).
-    fn build_detail_lines(&self, pid: u32) -> Vec<String> {
+    fn build_detail_lines(&mut self, pid: u32) -> Vec<String> {
         let mut lines = Vec::new();
         let proc = self.processes.get(&pid);
         let name = proc
@@ -2117,6 +2192,23 @@ impl App {
             if svcs.len() > 10 {
                 lines.push(format!("  ... and {} more", svcs.len() - 10));
             }
+        }
+        // Authenticode status (cached; verification touches the file).
+        if let Some(exe) = proc.and_then(|p| p.exe.as_deref()) {
+            let verdict = match self.signed_cache.get(exe) {
+                Some(v) => *v,
+                None => {
+                    let v = crate::actions::verify_signed(std::path::Path::new(exe));
+                    self.signed_cache.insert(exe.to_string(), v);
+                    v
+                }
+            };
+            let label = match verdict {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "unknown",
+            };
+            lines.push(format!("Signed:  {label}"));
         }
         lines.push(String::new());
         let conns: Vec<&ConnectionRow> = self.rows.iter().filter(|r| r.pid == pid).collect();
@@ -2535,7 +2627,7 @@ mod tests {
 
     #[test]
     fn presets_filter_and_clear() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.apply_snapshot(synthetic_snapshot_like());
 
         app.apply_preset(3); // state=established
@@ -2552,7 +2644,7 @@ mod tests {
 
     #[test]
     fn filter_history_navigates() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.filter_input.value = "proto=tcp".into();
         app.apply_filter_input();
         app.filter_input.value = "pid>1".into();
@@ -2570,7 +2662,7 @@ mod tests {
 
     #[test]
     fn sort_editor_operations() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.apply_snapshot(synthetic_snapshot_like());
 
         app.sort_toggle_column(ColumnId::Pid); // append
@@ -2646,7 +2738,7 @@ mod phase_b_tests {
 
     #[test]
     fn rules_add_toggle_and_style_precedence() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.apply_snapshot(synthetic_snapshot_like());
 
         app.add_alert_rule("proto=udp").unwrap();
@@ -2684,7 +2776,7 @@ mod phase_b_tests {
 
     #[test]
     fn alerts_fire_on_new_rows_only() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.add_alert_rule("proto=udp").unwrap();
 
         // First snapshot: everything New, but alerts must stay silent.
@@ -2721,7 +2813,7 @@ mod phase_c_tests {
     #[test]
     fn country_cell_without_database_is_blank() {
         // Default config has no GeoLite2 file around -> soft failure.
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.apply_snapshot(synthetic_snapshot_like());
         let row = app.rows.first().unwrap().clone();
         assert!(app.geo.is_none());
@@ -2732,7 +2824,7 @@ mod phase_c_tests {
 
     #[test]
     fn profiles_save_apply_delete() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.apply_snapshot(synthetic_snapshot_like());
 
         // Configure a distinctive view, save it, wreck the view, re-apply.
@@ -2764,7 +2856,7 @@ mod phase_c_tests {
 
     #[test]
     fn settings_toggles_flip_state() {
-        let mut app = App::new(crate::config::Config::default());
+        let mut app = App::new(crate::config::Config::default(), None);
         app.apply_snapshot(synthetic_snapshot_like());
 
         // Cursor 2 == "Show TCP"
@@ -2793,5 +2885,79 @@ mod phase_c_tests {
         let flag = crate::geoip::flag_emoji(&code).unwrap();
         assert_eq!(format!("{code} {flag}"), "TR \u{1F1F9}\u{1F1F7}");
         let _ = v4(127, 0, 0, 1);
+    }
+}
+
+#[cfg(test)]
+mod phase_d_tests {
+    use super::tests::{synthetic_snapshot_like, v4};
+    use super::*;
+    use crate::etw::EtwEvent;
+    use std::net::SocketAddr;
+
+    fn connect_event() -> EtwEvent {
+        EtwEvent::Connect {
+            v6: false,
+            pid: 42,
+            local: SocketAddr::new(v4(127, 0, 0, 1), 5001),
+            remote: SocketAddr::new(v4(93, 184, 216, 34), 443),
+        }
+    }
+
+    #[test]
+    fn etw_timestamps_override_first_seen() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        // A connect arrives before the row shows up in any snapshot.
+        app.handle_etw_event(connect_event());
+
+        let before = Local::now() - chrono::Duration::seconds(5);
+        let mut snap = synthetic_snapshot_like();
+        if let Some(row) = snap.rows.iter_mut().find(|r| r.local_port == 5001) {
+            // Simulate the ETW connect having happened 5 s ago.
+            let id = row.id.clone();
+            app.etw_connects.insert(id, before);
+        }
+        app.apply_snapshot(snap);
+        let row = app.rows.iter().find(|r| r.local_port == 5001).unwrap();
+        assert!(row.first_seen.is_some());
+        assert!(crate::model::age_seconds(row.first_seen) >= 5);
+    }
+
+    #[test]
+    fn transient_etw_connections_are_logged() {
+        let mut app = App::new(crate::config::Config::default(), None);
+        app.handle_etw_event(connect_event());
+        // Disconnect without any snapshot in between: transient entry.
+        let EtwEvent::Connect {
+            pid, local, remote, ..
+        } = connect_event()
+        else {
+            unreachable!()
+        };
+        app.handle_etw_event(EtwEvent::Disconnect {
+            v6: false,
+            pid,
+            local,
+            remote,
+        });
+        assert!(
+            app.event_log
+                .iter()
+                .any(|e| e.message.contains("transient"))
+        );
+    }
+
+    #[test]
+    fn signature_verification_runs_on_real_binary() {
+        // Tolerant: value depends on the environment, but it must not panic
+        // and must answer for an existing file.
+        let exe = std::env::current_exe().unwrap();
+        let verdict = crate::actions::verify_signed(&exe);
+        assert!(verdict.is_some());
+        // A nonexistent path reports unsigned rather than panicking.
+        assert_eq!(
+            crate::actions::verify_signed(std::path::Path::new("Z:/no/such/file.exe")),
+            Some(false)
+        );
     }
 }

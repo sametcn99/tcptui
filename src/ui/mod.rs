@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn renders_flat_grouped_and_popups_without_panicking() {
-        let mut app = App::new(Config::default());
+        let mut app = App::new(Config::default(), None);
         app.apply_snapshot(synthetic_snapshot());
 
         let backend = ratatui::backend::TestBackend::new(120, 30);

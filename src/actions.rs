@@ -241,6 +241,59 @@ fn sid_to_string(sid: PSID) -> Option<String> {
     s
 }
 
+/// Whether the file at `path` carries a valid Authenticode signature
+/// (`WinVerifyTrust`, no revocation check). `None` when the input is
+/// unusable; `Some(false)` when unsigned or invalid.
+pub fn verify_signed(path: &std::path::Path) -> Option<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Security::WinTrust::{
+        WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO, WTD_CHOICE_FILE,
+        WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE,
+        WinVerifyTrust,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    if wide.len() < 2 {
+        return None;
+    }
+
+    unsafe {
+        let mut file_info: WINTRUST_FILE_INFO = std::mem::zeroed();
+        file_info.cbStruct = std::mem::size_of::<WINTRUST_FILE_INFO>() as u32;
+        file_info.pcwszFilePath = windows::core::PCWSTR(wide.as_ptr());
+
+        let mut trust: WINTRUST_DATA = std::mem::zeroed();
+        trust.cbStruct = std::mem::size_of::<WINTRUST_DATA>() as u32;
+        trust.dwUIChoice = WTD_UI_NONE;
+        trust.fdwRevocationChecks = WTD_REVOKE_NONE;
+        trust.dwUnionChoice = WTD_CHOICE_FILE;
+        trust.Anonymous.pFile = &mut file_info;
+        trust.dwStateAction = WTD_STATEACTION_VERIFY;
+
+        let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+        let hwnd = windows::Win32::Foundation::HWND::default();
+        let rc = WinVerifyTrust(
+            hwnd,
+            &mut action,
+            &mut trust as *mut _ as *mut core::ffi::c_void,
+        );
+
+        // Release the verification state data.
+        trust.dwStateAction = WTD_STATEACTION_CLOSE;
+        let _ = WinVerifyTrust(
+            hwnd,
+            &mut action,
+            &mut trust as *mut _ as *mut core::ffi::c_void,
+        );
+
+        Some(rc == 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

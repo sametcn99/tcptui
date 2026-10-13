@@ -15,6 +15,9 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
     if !app.alert_pending.is_empty() {
         left_text.push_str(&format!("⚠{} ", app.alert_pending.len()));
     }
+    if app.etw_session.is_some() {
+        left_text.push_str("ETW ");
+    }
     if let Some(watch) = app.watch_pid {
         left_text.push_str(&format!("WATCH {watch} "));
     }

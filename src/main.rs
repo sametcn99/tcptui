@@ -58,7 +58,26 @@ fn run() -> Result<()> {
 
     tcptui::net::ensure_wsa()?;
 
-    let mut app = App::new(config);
+    // Experimental ETW mode: opt-in, elevated terminals only, falls back
+    // to plain polling on any failure.
+    let mut etw_error: Option<String> = None;
+    let mut etw_rx = None;
+    let mut etw_session = None;
+    if opts.etw || config.etw.enabled {
+        match tcptui::etw::EtwSession::start() {
+            Ok((session, rx)) => {
+                etw_rx = Some(rx);
+                etw_session = Some(session);
+            }
+            Err(e) => etw_error = Some(e),
+        }
+    }
+
+    let mut app = App::new(config, etw_rx);
+    app.etw_session = etw_session;
+    if let Some(e) = etw_error {
+        app.push_status(format!("ETW disabled: {e}"));
+    }
     if let Some(text) = opts.filter.clone() {
         app.filter_input.value = text;
         app.apply_filter_input();

@@ -52,17 +52,22 @@ fn parse_args(args: &[String]) -> Result<Cli> {
         help: false,
         version: false,
     };
-    for arg in args {
+    let mut it = 0;
+    while it < args.len() {
+        let arg = args[it].clone();
+        it += 1;
+        if arg == "--filter" {
+            let value = args.get(it).cloned();
+            it += 1;
+            cli.expression =
+                Some(value.ok_or_else(|| anyhow::anyhow!("--filter expects a value"))?);
+            continue;
+        }
         match arg.as_str() {
             "-a" => cli.all = true,
             "-c" => cli.csv = true,
             "-j" | "--json" => cli.json = true,
-            "--filter" => {
-                anyhow::bail!("--filter expects a value: --filter \"process:chrome and port=443\"");
-            }
-            arg if arg.starts_with("--filter=") => {
-                cli.expression = Some(arg.strip_prefix("--filter=").unwrap().to_string());
-            }
+
             "-n" => cli.resolve = false,
             "-h" | "--help" => cli.help = true,
             "-V" | "--version" => cli.version = true,

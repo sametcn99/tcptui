@@ -7,8 +7,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Axis, Block, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph,
-    Wrap,
+    Axis, Block, Borders, Cell, Chart, Clear, Dataset, GraphType, List, ListItem, ListState,
+    Paragraph, Row, Table, Wrap,
 };
 
 use crate::app::{App, Mode};
@@ -62,7 +62,7 @@ fn popup_block(title: &str, app: &App) -> Block<'static> {
 }
 
 fn draw_help(f: &mut Frame, app: &App, area: Rect) {
-    let rect = centered_rect(70, 90, area);
+    let rect = centered_rect(92, 85, area);
     let help = [
         ("Navigation", ""),
         ("Up/Down, j/k", "move selection"),
@@ -129,30 +129,81 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("x", "clear marks/filter/search"),
         ("q / Esc", "quit (close popup first)"),
     ];
-    let lines: Vec<Line> = help
+    // Two-column grid: balanced halves, aligned key columns, section
+    // headers kept in place.
+    enum HelpItem<'a> {
+        Header(&'a str),
+        Kv(&'a str, &'a str),
+    }
+    let items: Vec<HelpItem> = help
         .iter()
-        .map(|(k, v)| {
-            if v.is_empty() {
-                Line::from(Span::styled(
-                    *k,
-                    Style::default()
-                        .fg(app.theme.accent)
-                        .add_modifier(Modifier::BOLD),
-                ))
+        .filter_map(|(k, v)| {
+            if k.is_empty() && v.is_empty() {
+                None // pure spacer
+            } else if v.is_empty() {
+                Some(HelpItem::Header(k))
             } else {
-                Line::from(vec![
-                    Span::styled(format!("{k:<24}"), Style::default().fg(app.theme.normal)),
-                    Span::raw(v.to_string()),
-                ])
+                Some(HelpItem::Kv(k, v))
             }
         })
         .collect();
-    let paragraph = Paragraph::new(lines)
-        .block(popup_block("Help — tcptui", app))
-        .wrap(Wrap { trim: false })
-        .scroll((app.help_scroll, 0));
+    let mid = items.len().div_ceil(2);
+    let (left, right) = items.split_at(mid);
+
+    let key_style = Style::default()
+        .fg(app.theme.normal)
+        .add_modifier(Modifier::BOLD);
+    let header_style = Style::default()
+        .fg(app.theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let dim_style = Style::default().fg(app.theme.dim);
+
+    let page = rect.height.saturating_sub(2) as usize; // borders
+    let total_rows = left.len().max(right.len());
+    let max_offset = total_rows.saturating_sub(page);
+    let offset = (app.help_scroll as usize).min(max_offset);
+
+    let mut rows: Vec<Row> = Vec::with_capacity(page);
+    for i in offset..total_rows {
+        let mut cells: Vec<Cell> = Vec::with_capacity(5);
+        for (side, last) in [(left.get(i), false), (right.get(i), true)] {
+            let (a, b) = match side {
+                Some(HelpItem::Header(h)) => (
+                    Cell::from(Line::from(Span::styled(*h, header_style))),
+                    Cell::from(""),
+                ),
+                Some(HelpItem::Kv(k, v)) => (
+                    Cell::from(Line::from(Span::styled(*k, key_style))),
+                    Cell::from(Line::from(Span::styled(*v, dim_style))),
+                ),
+                None => (Cell::from(""), Cell::from("")),
+            };
+            cells.push(a);
+            cells.push(b);
+            if !last {
+                cells.push(Cell::from("")); // gutter between the two sides
+            }
+        }
+        rows.push(Row::new(cells));
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(23),
+            Constraint::Min(12),
+            Constraint::Length(3),
+            Constraint::Length(23),
+            Constraint::Min(12),
+        ],
+    )
+    .column_spacing(1)
+    .block(popup_block("Help — tcptui", app).title_bottom(Span::styled(
+        "j/k: scroll   PgUp/PgDn: page   Esc: close",
+        Style::default().fg(app.theme.changed),
+    )));
     f.render_widget(Clear, rect);
-    f.render_widget(paragraph, rect);
+    f.render_widget(table, rect);
 }
 
 fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {

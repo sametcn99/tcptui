@@ -1,528 +1,642 @@
 <!DOCTYPE html>
-<html lang="en" data-site-theme="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>tcptui — Terminal UI Clone of Sysinternals TCPView for Windows (Rust + Ratatui)</title>
-  <meta name="description" content="A fast, feature-rich terminal UI clone of Sysinternals TCPView for Windows written in Rust with Ratatui. Monitor IPv4/IPv6 TCP & UDP sockets, chart bandwidth via EStats, filter with a structured query language, track ETW kernel events, and manage connections." />
-  <meta property="og:title" content="tcptui — Terminal UI Clone of Sysinternals TCPView for Windows" />
-  <meta property="og:description" content="Real-time Windows TCP/UDP endpoint monitoring in the terminal. Structured filter language, EStats bandwidth charts, ETW kernel tracking, Wireshark-style coloring rules, GeoIP, and tcpvcon CLI." />
-  <meta property="og:type" content="website" />
+  <title>tcptui // Windows Kernel Socket Telemetry &amp; Terminal UI (Rust + Ratatui)</title>
+  <meta name="description" content="A native Rust + Ratatui terminal UI clone of Sysinternals TCPView for Windows. Real-time IPv4/IPv6 TCP & UDP inspection, EStats bandwidth charts, ETW kernel tracing, structured filter AST, and connection control." />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
-  <!-- ========================================================================
-       Top Sticky Navigation Bar
-       ======================================================================== -->
+  <!-- Floating Live Keystroke Telemetry Indicator -->
+  <div id="keystroke-hud" class="keystroke-hud">KEY_EVENT // [p] Pause</div>
+
+  <!-- Top Live Telemetry Strip -->
+  <div class="telemetry-bar">
+    <div class="telemetry-group">
+      <span class="telemetry-item"><span class="pulse-dot"></span> ENGINE: ONLINE</span>
+      <span class="telemetry-item">TARGET: x86_64-pc-windows-msvc</span>
+      <span class="telemetry-item">EDITION: RUST 2024 // RATATUI 0.30.2</span>
+      <span class="telemetry-item">WIN32_API: IpHlpApi · WinTrust · AdvApi32 · ETW</span>
+    </div>
+    <div class="telemetry-group">
+      <span class="telemetry-item" id="top-live-throughput">TX: 412.4 KiB/s · RX: 2.38 MiB/s</span>
+      <span class="telemetry-item" style="color: var(--cyan);">RELEASE: v1.3.0</span>
+    </div>
+  </div>
+
+  <!-- Sticky Navigation Bar -->
   <header class="navbar">
-    <div class="container navbar-inner">
+    <div class="navbar-inner">
       <a href="#" class="brand">
-        <img src="favicon.svg" alt="tcptui logo" class="brand-logo" />
+        <span class="brand-mark">T</span>
         <span>tcptui</span>
-        <span class="brand-version">v1.3.0</span>
+        <span class="brand-tag">v1.3.0</span>
       </a>
 
       <ul class="nav-links">
-        <li><a href="#showcase" data-i18n="nav_showcase">TUI Showcase</a></li>
-        <li><a href="#features" data-i18n="nav_features">Features</a></li>
-        <li><a href="#filter-playground" data-i18n="nav_filter">Filter Playground</a></li>
-        <li><a href="#cli-reference" data-i18n="nav_cli">CLI &amp; tcpvcon</a></li>
-        <li><a href="#keymap" data-i18n="nav_keymap">Keymap</a></li>
-        <li><a href="#config" data-i18n="nav_config">Config Builder</a></li>
-        <li><a href="#architecture" data-i18n="nav_arch">Architecture</a></li>
+        <li><a href="#workstation" data-i18n="nav_workstation">01 // LIVE WORKSTATION</a></li>
+        <li><a href="#architecture" data-i18n="nav_arch">02 // ARCHITECTURE</a></li>
+        <li><a href="#filter-engine" data-i18n="nav_filter">03 // FILTER AST</a></li>
+        <li><a href="#keyboard-deck" data-i18n="nav_kb">04 // KEYDECK</a></li>
+        <li><a href="#cli-config" data-i18n="nav_cli">05 // CLI &amp; CONFIG</a></li>
       </ul>
 
-      <div class="nav-actions">
-        <button id="lang-toggle-btn" class="lang-toggle" title="Switch Language (EN / TR)">🌐 TR</button>
-        <button id="site-theme-toggle" class="btn-icon" title="Toggle Dark/Light Theme">☀️ Light</button>
-        <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener" class="btn-github">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span>GitHub</span>
+      <div class="nav-right">
+        <button id="lang-switch" class="hud-btn" title="Switch Language (EN / TR)">TR // EN</button>
+        <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="hud-btn">
+          <span>↓ BINARIES</span>
+        </a>
+        <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener" class="hud-btn hud-btn-primary">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>GITHUB</span>
         </a>
       </div>
     </div>
   </header>
 
-  <!-- ========================================================================
-       Hero & Interactive TUI Emulator Section
-       ======================================================================== -->
-  <section class="hero" id="showcase">
-    <div class="container">
-      <div class="hero-badges">
-        <span class="pill"><span class="pill-dot"></span><span data-i18n="hero_badge_1">v1.3.0 Latest Release</span></span>
-        <span class="pill" data-i18n="hero_badge_2">Rust 2024 · Ratatui 0.30</span>
-        <span class="pill" data-i18n="hero_badge_3">Windows x86_64 Native</span>
-        <span class="pill">MIT License</span>
-      </div>
+  <main class="shell-wrap">
 
-      <h1 class="hero-title">
-        <span data-i18n="hero_title_1">Sysinternals TCPView,</span><br />
-        <span class="gradient-text" data-i18n="hero_title_2">Reimagined for the Terminal.</span>
-      </h1>
+    <!-- ======================================================================
+         HERO ARCHITECTURAL SPLIT + 60FPS ESTATS OSCILLOSCOPE
+         ====================================================================== -->
+    <section class="hero-grid">
+      <div class="hero-left">
+        <span class="corner-plus cp-tl">+</span>
+        <span class="corner-plus cp-tr">+</span>
+        <span class="corner-plus cp-bl">+</span>
+        <span class="corner-plus cp-br">+</span>
 
-      <p class="hero-subtitle" data-i18n="hero_subtitle">
-        Inspect every IPv4 &amp; IPv6 TCP/UDP socket on Windows in real time. Built in Rust with Ratatui — featuring a structured filter language, live EStats bandwidth charts, ETW kernel tracking, Wireshark-style coloring rules, GeoIP flags, Authenticode verification, and instant connection termination.
-      </p>
+        <div class="section-coord" data-i18n="hero_coord">SYSINTERNALS TCPVIEW // TERMINAL RE-ENGINEERING</div>
+        <h1 class="hero-headline">
+          <span data-i18n="hero_h1_a">Total Socket Visibility.</span><br />
+          <span class="accent-stroke" data-i18n="hero_h1_b">Zero GUI Overhead.</span>
+        </h1>
+        <p class="hero-lead" data-i18n="hero_lead">
+          Native Rust terminal UI for Windows that enumerates every IPv4 &amp; IPv6 TCP/UDP endpoint in real time. Equipped with extended TCP byte counters (EStats), kernel ETW connection tracing, a 17-field boolean query compiler, Wireshark-style row coloring, Authenticode verification, and instant <code>SetTcpEntry</code> socket termination.
+        </p>
 
-      <div class="hero-cta-row">
-        <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="btn btn-primary">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span data-i18n="cta_download">Download v1.3.0 (Windows x64)</span>
-        </a>
-        <a href="#filter-playground" class="btn btn-secondary">
-          <span>⚡</span>
-          <span data-i18n="cta_playground">Try Filter Playground</span>
-        </a>
-        <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener" class="btn btn-secondary" data-i18n="cta_source">
-          View Source on GitHub
-        </a>
-      </div>
-
-      <!-- Quick Install Command Card -->
-      <div class="quick-install-card">
-        <div class="install-tabs">
-          <button class="install-tab active" data-install="scoop">Scoop (Recommended)</button>
-          <button class="install-tab" data-install="cargo">Cargo (Git)</button>
-          <button class="install-tab" data-install="binary">PowerShell (Release ZIP)</button>
-          <button class="install-tab" data-install="source">Build from Source</button>
+        <div class="hero-actions">
+          <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="cta-btn cta-btn-cyan">
+            <span>↓ DOWNLOAD v1.3.0 (WIN-X64)</span>
+          </a>
+          <a href="#workstation" class="cta-btn">
+            <span>▶ INTERACTIVE TUI BELOW</span>
+          </a>
+          <a href="#filter-engine" class="cta-btn">
+            <span>λ QUERY COMPILER</span>
+          </a>
         </div>
-        <div class="install-body">
-          <div class="install-cmd">
-            <span class="prompt">&gt;</span><span id="install-cmd-text">scoop install https://github.com/sametcn99/tcptui/releases/download/v1.3.0/scoop-tcptui.json</span>
+
+        <div class="hero-metrics">
+          <div class="metric-cell">
+            <div class="metric-val">250ms</div>
+            <div class="metric-lbl">Min Poll Tick</div>
           </div>
-          <button id="install-copy-btn" class="copy-btn">Copy</button>
+          <div class="metric-cell">
+            <div class="metric-val">0 Async</div>
+            <div class="metric-lbl">Pure std::thread</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-val">17 Fields</div>
+            <div class="metric-lbl">Filter Grammar</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-val">2 Bins</div>
+            <div class="metric-lbl">tcptui + tcpvcon</div>
+          </div>
         </div>
       </div>
 
-      <!-- Interactive TUI Simulator -->
-      <div class="tui-showcase-controls">
-        <div class="tui-view-tabs">
-          <button class="tui-view-btn active" data-view="endpoints">Live Table <kbd>Normal</kbd></button>
-          <button class="tui-view-btn" data-view="chart">Bandwidth Chart <kbd>B</kbd></button>
-          <button class="tui-view-btn" data-view="grouped">Process Tree <kbd>G</kbd></button>
-          <button class="tui-view-btn" data-view="palette">Command Palette <kbd>Ctrl+P</kbd></button>
-          <button class="tui-view-btn" data-view="rules">Alerts &amp; Colors <kbd>A</kbd></button>
-          <button class="tui-view-btn" data-view="stats">Process &amp; Sparkline <kbd>Enter / i</kbd></button>
-          <button class="tui-view-btn" data-view="help">Help Grid <kbd>?</kbd></button>
+      <div class="hero-right">
+        <!-- Live 60fps EStats Throughput Oscilloscope -->
+        <div class="oscilloscope-card">
+          <div class="osc-header">
+            <span>ESTATS_WAVEFORM // GetPerTcpConnectionEStats</span>
+            <span><span style="color: var(--cyan);">■ TX</span> · <span style="color: var(--green);">■ RX</span></span>
+          </div>
+          <canvas id="estats-canvas" width="520" height="68"></canvas>
         </div>
 
-        <div class="tui-theme-bar">
-          <span class="tui-theme-label">--theme</span>
-          <select id="tui-theme-select" class="tui-theme-select" aria-label="Select Terminal Theme">
-            <option value="dark">dark (default)</option>
-            <option value="gruvbox">gruvbox</option>
-            <option value="nord">nord</option>
-            <option value="solarized-dark">solarized-dark</option>
-            <option value="solarized-light">solarized-light</option>
-            <option value="light">light</option>
+        <!-- Package Manager Deck -->
+        <div class="install-deck">
+          <div class="deck-header">
+            <div class="deck-tabs">
+              <button class="deck-tab active" data-pkg="scoop">SCOOP</button>
+              <button class="deck-tab" data-pkg="cargo">CARGO</button>
+              <button class="deck-tab" data-pkg="pwsh">POWERSHELL</button>
+              <button class="deck-tab" data-pkg="source">BUILD</button>
+            </div>
+            <button id="copy-pkg-btn" class="hud-btn" style="height: 24px; font-size: 0.66rem; padding: 0 8px;">COPY</button>
+          </div>
+          <div class="deck-body">
+            <div class="deck-cmd">
+              <span class="ps-prompt">PS&gt;</span><span id="pkg-cmd-display">scoop install https://github.com/sametcn99/tcptui/releases/download/v1.3.0/scoop-tcptui.json</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dual Binary Suite -->
+        <div class="binary-split">
+          <div class="binary-card">
+            <div class="binary-name">
+              <span>tcptui.exe</span>
+              <span class="binary-badge">RATATUI TUI</span>
+            </div>
+            <div class="binary-desc">
+              Interactive socket table, EStats bandwidth chart, ETW kernel session, rules studio, whois, VirusTotal &amp; SetTcpEntry killer.
+            </div>
+          </div>
+          <div class="binary-card">
+            <div class="binary-name">
+              <span>tcpvcon.exe</span>
+              <span class="binary-badge">HEADLESS CLI</span>
+            </div>
+            <div class="binary-desc">
+              Script-ready companion mirroring Sysinternals <code>tcpvcon</code> with CSV (<code>-c</code>), JSON (<code>-j</code>), and <code>--filter</code> expressions.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         01 // LIVE INTERACTIVE BROWSER TUI WORKSTATION
+         ====================================================================== -->
+    <section class="workstation-section" id="workstation">
+      <div class="workstation-toolbar">
+        <div>
+          <div class="section-coord" style="margin-bottom: 6px;">01 // INTERACTIVE TUI WORKSTATION (RIGHT-CLICK ANY ROW · CLICK HEADERS · PRESS KEYS)</div>
+          <div class="mode-pills">
+            <button class="mode-btn active" data-tui-mode="table">Endpoints <kbd>Esc</kbd></button>
+            <button class="mode-btn" data-tui-mode="chart">Bandwidth <kbd>B</kbd></button>
+            <button class="mode-btn" data-tui-mode="grouped">Process Tree <kbd>G</kbd></button>
+            <button class="mode-btn" data-tui-mode="palette">Command Palette <kbd>Ctrl+P</kbd></button>
+            <button class="mode-btn" data-tui-mode="rules">Alerts &amp; Colors <kbd>A</kbd></button>
+            <button class="mode-btn" data-tui-mode="detail">Authenticode <kbd>Enter</kbd></button>
+            <button class="mode-btn" data-tui-mode="whois">Whois <kbd>w</kbd></button>
+            <button class="mode-btn" data-tui-mode="vt">VirusTotal <kbd>V</kbd></button>
+          </div>
+        </div>
+
+        <div class="workstation-controls-right">
+          <button id="tui-btn-pause" class="hud-btn" title="Pause/Resume live simulation (p)">⏸ PAUSE [p]</button>
+          <button id="tui-btn-close-conn" class="hud-btn" style="border-color: rgba(255,46,85,0.45); color: var(--crimson);" title="Close selected TCP connection via SetTcpEntry (c)">✕ CLOSE CONN [c]</button>
+          <button id="tui-btn-crt" class="hud-btn" title="Toggle CRT Scanline Shader">CRT: OFF</button>
+          <select id="tui-theme-picker" class="tui-select" aria-label="Select TUI Theme">
+            <option value="dark">theme: dark</option>
+            <option value="gruvbox">theme: gruvbox</option>
+            <option value="nord">theme: nord</option>
+            <option value="solarized-dark">theme: solarized-dark</option>
+            <option value="solarized-light">theme: solarized-light</option>
+            <option value="light">theme: light</option>
           </select>
         </div>
       </div>
 
-      <div id="tui-window" class="tui-window" data-tui-theme="dark">
-        <div class="tui-chrome">
-          <div class="tui-dots"><span></span><span></span><span></span></div>
-          <div class="tui-chrome-title">Windows Terminal — tcptui.exe (120×30)</div>
-          <div class="tui-chrome-title">Ratatui 0.30.2</div>
-        </div>
-        <div class="tui-status-bar">
-          <div><strong> tcptui </strong><span id="tui-status-left"> sort:Process ↑ resolve:on </span></div>
-          <div id="tui-status-right">1000ms ADMIN</div>
-        </div>
-        <div class="tui-screen">
-          <pre id="tui-pre" class="tui-pre"></pre>
-        </div>
-        <div class="tui-footer">
-          <div id="tui-footer-top"></div>
-          <div id="tui-footer-bottom"></div>
-        </div>
-      </div>
-
-      <div class="tui-legend">
-        <span class="legend-item"><span class="legend-swatch" style="background: #22c55e;"></span> <strong>Green (+)</strong>: Newly opened endpoint</span>
-        <span class="legend-item"><span class="legend-swatch" style="background: #eab308;"></span> <strong>Yellow (~)</strong>: TCP state changed</span>
-        <span class="legend-item"><span class="legend-swatch" style="background: #ef4444;"></span> <strong>Red (-)</strong>: Closed / deleted endpoint</span>
-        <span class="legend-item"><span class="legend-swatch" style="background: #d946ef;"></span> <strong>Purple (*)</strong>: Marked for batch action</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========================================================================
-       Feature Overview & Technical Deep Dive
-       ======================================================================== -->
-  <section class="section" id="features">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-eyebrow" data-i18n="features_eyebrow">CAPABILITIES &amp; DEEP DIVE</span>
-        <h2 class="section-title" data-i18n="features_title">Everything TCPView does — plus power-user workflows.</h2>
-        <p class="section-desc" data-i18n="features_desc">
-          Designed for systems engineers, security analysts, and developers who live in the terminal.
-        </p>
-      </div>
-
-      <div class="grid-3">
-        <div class="card">
-          <div class="card-icon">⚡</div>
-          <h3>Real-Time Diff Highlighting <kbd>p</kbd></h3>
-          <p>
-            Enumerates all IPv4 &amp; IPv6 TCP and UDP endpoints at configurable intervals (<code>250ms</code>–<code>60s</code>). Newly created sockets flash <strong>green</strong>, state transitions turn <strong>yellow</strong>, and closed sockets linger for one tick in <strong>red</strong>. Press <code>p</code> anytime to freeze live updates for inspection while ETW timestamps continue buffering in the background.
-          </p>
+      <!-- The Interactive Terminal Window -->
+      <div id="tui-viewport" class="tui-viewport" data-theme="dark">
+        <!-- Windows Terminal Header -->
+        <div class="wt-chrome">
+          <div class="wt-tabs">
+            <div class="wt-tab">
+              <span style="color: var(--cyan);">■</span>
+              <span>Administrator: tcptui.exe — --etw</span>
+            </div>
+          </div>
+          <div style="font-size: 0.68rem; color: #64748b;">RIGHT-CLICK ROW FOR CONTEXT MENU · DOUBLE-CLICK FOR AUTHENTICODE · CLICK HEADER TO SORT</div>
+          <div class="wt-win-btns"><span>─</span><span>□</span><span>✕</span></div>
         </div>
 
-        <div class="card">
-          <div class="card-icon">📊</div>
-          <h3>EStats Bandwidth Charts <kbd>B</kbd></h3>
-          <p>
-            Reads per-connection Extended TCP Statistics (<code>GetPerTcpConnectionEStats</code>) directly from the Windows IP Helper API. Open the live rolling bar chart (<code>B</code>) to monitor 60-sample Tx/Rx throughput deltas for the entire system or press <code>Tab</code> to isolate the currently selected socket.
-          </p>
+        <!-- Ratatui Blue Status Bar -->
+        <div class="ratatui-topbar">
+          <div class="ratatui-topbar-left">
+            <span class="ratatui-badge-app"> tcptui </span>
+            <span id="tui-alert-pill" class="ratatui-badge-alert" style="display: none;">⚠ 1 ALERT</span>
+            <span id="tui-pause-pill" class="ratatui-badge-paused" style="display: none;">PAUSED</span>
+            <span>ETW</span>
+            <span id="tui-sort-indicator">sort:process↑</span>
+            <span>resolve:on</span>
+          </div>
+          <div>1000ms ADMIN</div>
         </div>
 
-        <div class="card">
-          <div class="card-icon">🔍</div>
-          <h3>Structured Filter Language <kbd>/</kbd></h3>
-          <p>
-            Full tokenizer, recursive-descent boolean parser, and AST evaluator supporting 17 fields, 10 comparison &amp; regex operators, wildcards (<code>*</code>, <code>?</code>), byte units (<code>kb</code>, <code>mb</code>, <code>gb</code>), and nested <code>and</code>/<code>or</code>/<code>not</code> logic with live match counts, inline syntax diagnostics, and quick presets on keys <code>1</code>–<code>8</code>.
-          </p>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🛡️</div>
-          <h3>Authenticode, Services &amp; Users <kbd>Enter</kbd></h3>
-          <p>
-            Resolves every PID to its executable path, hosting Windows SCM service (e.g., unpacking <code>svchost.exe</code> service names), owning user account, and cryptographic Authenticode signature validity via <code>WinVerifyTrust</code> — complete with a 2-minute Unicode traffic sparkline.
-          </p>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🛰️</div>
-          <h3>Experimental ETW Kernel Mode <kbd>--etw</kbd></h3>
-          <p>
-            When launched elevated with <code>--etw</code>, <code>tcptui</code> subscribes to the <code>Microsoft-Windows-Kernel-Network</code> ETW provider for real event-driven connect/disconnect timestamps and logs short-lived transient connections that occur between polling intervals. Automatically falls back to polling if unavailable.
-          </p>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🚨</div>
-          <h3>Alert &amp; Coloring Rules <kbd>A</kbd></h3>
-          <p>
-            Define filter expressions that trigger an alert banner (<code>⚠</code>), event log record, and optional terminal bell whenever a matching new endpoint appears. Switch to the Colors tab to configure ordered Wireshark-style row styling rules (foreground, background, bold, underline).
-          </p>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">✂️</div>
-          <h3>Close Socket &amp; Batch Actions <kbd>c / K</kbd></h3>
-          <p>
-            Immediately tear down established IPv4 TCP connections using <code>SetTcpEntry</code> (<code>c</code>) — the exact Win32 API used by Sysinternals TCPView — or terminate owning processes (<code>K</code>). Mark multiple rows with <code>Space</code> or <code>Shift+↑/↓</code> to execute batch connection resets or process kills.
-          </p>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🌍</div>
-          <h3>GeoIP Flags, Whois &amp; VirusTotal <kbd>w / V</kbd></h3>
-          <p>
-            Drop a MaxMind <code>GeoLite2-Country.mmdb</code> file next to the binary to automatically enable the Country column with flag badges. Run built-in recursive RFC 3912 <code>whois</code> lookups (<code>w</code>) or query VirusTotal reputation reports (<code>V</code>, with the <code>virustotal</code> Cargo feature).
-          </p>
-        </div>
-
-        <div class="card">
-          <div class="card-icon">🖱️</div>
-          <h3>Profiles, Mouse &amp; Headless Dump <kbd>Ctrl+P</kbd></h3>
-          <p>
-            Click column headers to sort (<code>Shift+Click</code> appends to multi-key sort chain), drag column edges to resize, scroll horizontally with <code>Shift+Wheel</code>, or right-click any row for the context menu. Export/import named TOML profiles (<code>P</code>) or capture headless screenshots with <code>--dump-frame</code>.
-          </p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========================================================================
-       Interactive Filter Language Playground
-       ======================================================================== -->
-  <section class="section" id="filter-playground">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-eyebrow" data-i18n="filter_eyebrow">INTERACTIVE STRUCTURED QUERY ENGINE</span>
-        <h2 class="section-title" data-i18n="filter_title">Live Filter Language Playground</h2>
-        <p class="section-desc" data-i18n="filter_desc">
-          Type any <code>tcptui</code> filter expression below or click a preset chip to test the query parser live against a simulated Windows socket table.
-        </p>
-      </div>
-
-      <div class="playground-box">
-        <div class="playground-top">
-          <div class="filter-input-row">
-            <span class="filter-prefix">filter /</span>
-            <input
-              id="playground-filter-input"
-              type="text"
-              class="filter-input"
-              value="proto=tcp and state=established and not loopback"
-              placeholder="e.g. process:chrome and tx>100KB or port=443"
-              spellcheck="false"
-            />
-            <span id="playground-status-badge" class="filter-status-badge valid">8 / 16 matched</span>
+        <!-- Interactive Preset & Filter Strip Inside Terminal -->
+        <div class="tui-quickbar">
+          <div class="tui-preset-group">
+            <span style="color: var(--t-dim); margin-right: 4px;">PRESETS:</span>
+            <button class="tui-mini-btn active" data-preset="">[8] ALL</button>
+            <button class="tui-mini-btn" data-preset="proto=tcp">[1] TCP</button>
+            <button class="tui-mini-btn" data-preset="proto=udp">[2] UDP</button>
+            <button class="tui-mini-btn" data-preset="state=established">[3] ESTAB</button>
+            <button class="tui-mini-btn" data-preset="state=listen">[4] LISTEN</button>
+            <button class="tui-mini-btn" data-preset="loopback=true">[5] LOOPBACK</button>
+            <button class="tui-mini-btn" data-preset="loopback=false">[6] EXTERNAL</button>
+            <button class="tui-mini-btn" data-preset="change=new">[7] NEW (+)</button>
           </div>
 
-          <div class="preset-chips">
-            <span style="font-size: 0.78rem; color: var(--text-muted); font-family: var(--font-mono); margin-right: 4px;">Presets:</span>
-            <button class="preset-chip" data-expr="">All (Clear)</button>
-            <button class="preset-chip" data-expr="proto=tcp">[1] TCP Only</button>
-            <button class="preset-chip" data-expr="proto=udp">[2] UDP Only</button>
-            <button class="preset-chip" data-expr="state=established">[3] ESTABLISHED</button>
-            <button class="preset-chip" data-expr="state=listen">[4] LISTEN</button>
-            <button class="preset-chip" data-expr="loopback=true">[5] Loopback</button>
-            <button class="preset-chip" data-expr="not loopback">[6] Non-Loopback</button>
-            <button class="preset-chip" data-expr="change=new">[7] New Endpoints</button>
-            <button class="preset-chip" data-expr="process:chrome and rx>1MB">Chrome &gt; 1MB Rx</button>
-            <button class="preset-chip" data-expr="(process=Code.exe or process=cargo.exe) and port=443">Dev Tools HTTPS</button>
-            <button class="preset-chip" data-expr="service:dns or service:wireguard">By Windows Service</button>
+          <div class="tui-inline-filter">
+            <span style="color: var(--t-header); font-weight: 700;">/</span>
+            <input id="tui-live-filter" type="text" placeholder="Filter live table (e.g. chrome, port=443, tx>1MB)..." spellcheck="false" />
           </div>
         </div>
 
-        <div class="playground-table-wrap">
-          <table class="data-table">
+        <!-- Main Terminal Body -->
+        <div id="tui-body-container" class="tui-body-container">
+          <!-- Interactive Endpoint Table -->
+          <div id="tui-view-table">
+            <table class="tui-grid-table">
+              <thead>
+                <tr>
+                  <th data-sort="mark">M</th>
+                  <th data-sort="process">Process ▲</th>
+                  <th data-sort="pid">PID</th>
+                  <th data-sort="proto">Proto</th>
+                  <th data-sort="laddr">Local Address</th>
+                  <th data-sort="lport">L-Port</th>
+                  <th data-sort="raddr">Remote Address</th>
+                  <th data-sort="rport">R-Port</th>
+                  <th data-sort="state">State</th>
+                  <th data-sort="service">Service</th>
+                  <th data-sort="tx">Tx</th>
+                  <th data-sort="rx">Rx</th>
+                  <th data-sort="age">Age</th>
+                  <th data-sort="country">Country</th>
+                </tr>
+              </thead>
+              <tbody id="tui-live-tbody"></tbody>
+            </table>
+          </div>
+
+          <!-- Ratatui Right-Click Context Menu -->
+          <div id="tui-ctx-menu" class="tui-ctx-menu">
+            <div id="tui-ctx-title" class="tui-ctx-title">┌ Context Menu ──┐</div>
+            <button class="tui-ctx-item" data-ctx="detail"><span>Process details &amp; sparkline</span><span>Enter</span></button>
+            <button class="tui-ctx-item" data-ctx="close"><span>Close TCP connection</span><span>c</span></button>
+            <button class="tui-ctx-item" data-ctx="kill"><span>End owning process</span><span>K</span></button>
+            <button class="tui-ctx-item" data-ctx="whois"><span>Whois remote address</span><span>w</span></button>
+            <button class="tui-ctx-item" data-ctx="vt"><span>VirusTotal lookup</span><span>V</span></button>
+            <button class="tui-ctx-item" data-ctx="mark"><span>Toggle row mark (*)</span><span>Space</span></button>
+            <button class="tui-ctx-item" data-ctx="json"><span>Copy row as JSON</span><span>Ctrl+C</span></button>
+          </div>
+
+          <!-- Dynamic Modal / Alternative Views Inside Terminal -->
+          <div id="tui-modal" class="tui-modal-overlay">
+            <div>
+              <div class="tui-modal-header">
+                <span id="tui-modal-title">┌ Popup ──┐</span>
+                <button id="tui-modal-close" class="tui-modal-close">[Esc] Close</button>
+              </div>
+              <div id="tui-modal-content"></div>
+            </div>
+            <div id="tui-modal-foot" style="border-top: 1px solid var(--t-border); padding-top: 6px; color: var(--t-dim); font-size: 0.73rem;"></div>
+          </div>
+        </div>
+
+        <!-- Ratatui Two-Line Footer -->
+        <div class="ratatui-footer">
+          <div id="tui-status-msg" style="color: var(--t-changed); display: none;"></div>
+          <div class="ratatui-footer-hints">
+            <span data-tui-mode="detail">Enter:inspect</span>
+            <span data-tui-mode="chart">B:chart</span>
+            <span data-tui-mode="grouped">G:group</span>
+            <span data-tui-mode="palette">Ctrl+P:palette</span>
+            <span data-tui-mode="rules">A:rules</span>
+            <span data-tui-mode="whois">w:whois</span>
+            <span data-tui-mode="vt">V:virustotal</span>
+            <span id="hint-mark">Space:mark</span>
+            <span id="hint-close">c:close-socket</span>
+            <span id="hint-kill">K:kill-pid</span>
+          </div>
+          <div id="tui-stats-line">total 16 · tcp 14 (est 9 lsn 3 tw 1 cw 1) · udp 2 · shown 16</div>
+        </div>
+      </div>
+
+      <div class="workstation-caption">
+        <div class="legend-pills">
+          <span class="legend-pill"><span class="swatch" style="background: var(--green);"></span> <strong>+ NEW</strong> (Opened this tick)</span>
+          <span class="legend-pill"><span class="swatch" style="background: var(--amber);"></span> <strong>~ CHANGED</strong> (TCP state transition)</span>
+          <span class="legend-pill"><span class="swatch" style="background: var(--crimson);"></span> <strong>- DELETED</strong> (Closed / SetTcpEntry reset)</span>
+          <span class="legend-pill"><span class="swatch" style="background: var(--violet);"></span> <strong>* MARKED</strong> (Spacebar batch target)</span>
+        </div>
+        <div>PRESS PHYSICAL KEYS (<kbd style="color: var(--cyan);">p</kbd> <kbd style="color: var(--cyan);">B</kbd> <kbd style="color: var(--cyan);">G</kbd> <kbd style="color: var(--cyan);">A</kbd> <kbd style="color: var(--cyan);">w</kbd> <kbd style="color: var(--cyan);">V</kbd> <kbd style="color: var(--cyan);">c</kbd> <kbd style="color: var(--cyan);">Space</kbd> <kbd style="color: var(--cyan);">1-8</kbd>) OR RIGHT-CLICK ANY ROW</div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         02 // ASYMMETRIC BENTO ARCHITECTURE & WIN32 SCHEMATICS
+         ====================================================================== -->
+    <section class="bento-section" id="architecture">
+      <div class="section-banner">
+        <div>
+          <div class="section-coord">02 // SYSTEM INTERNALS &amp; WIN32 TELEMETRY PIPELINE</div>
+          <h2 data-i18n="bento_title">Engineered for Sub-Millisecond Terminal Rendering.</h2>
+        </div>
+        <p data-i18n="bento_sub">
+          No Electron. No Tokio async bloat. Classic <code>std::thread</code> + <code>mpsc</code> channels bridge low-level Windows IP Helper &amp; ETW kernel APIs to a deterministic Ratatui frame buffer.
+        </p>
+      </div>
+
+      <div class="bento-grid">
+        <!-- Cell 1 (7 Cols): Interactive Win32 -> Ratatui Pipeline Inspector -->
+        <div class="bento-cell col-7">
+          <div class="cell-tag">INTERACTIVE SCHEMATIC // CLICK A STAGE TO INSPECT RUST MODULE</div>
+          <h3>4-Stage Lock-Free Collector &amp; Render Pipeline</h3>
+          <p>Click each subsystem node below to inspect the exact Win32 system calls and Rust source files powering <code>tcptui</code>:</p>
+
+          <div class="arch-nodes">
+            <div class="arch-node active" data-arch="net">
+              <div class="arch-node-step">STAGE 01</div>
+              <div class="arch-node-title">src/net.rs + proc.rs</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Socket &amp; EStats Poll</div>
+            </div>
+            <div class="arch-node" data-arch="etw">
+              <div class="arch-node-step">STAGE 02</div>
+              <div class="arch-node-title">src/etw.rs + dns.rs</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Kernel ETW &amp; GeoIP</div>
+            </div>
+            <div class="arch-node" data-arch="model">
+              <div class="arch-node-step">STAGE 03</div>
+              <div class="arch-node-title">src/model.rs + filter.rs</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Snapshot Diff &amp; AST</div>
+            </div>
+            <div class="arch-node" data-arch="ui">
+              <div class="arch-node-step">STAGE 04</div>
+              <div class="arch-node-title">src/ui/ + actions.rs</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Ratatui &amp; SetTcpEntry</div>
+            </div>
+          </div>
+
+          <div id="arch-inspector-box" class="arch-inspector">
+            <strong style="color: var(--cyan);">[STAGE 01 // src/net.rs · src/proc.rs · src/services.rs]</strong><br />
+            Calls <code>netstat2::get_sockets_info(AF_INET | AF_INET6, TCP | UDP)</code>, queries Win32 <code>GetPerTcpConnectionEStats</code> / <code>GetPerTcp6ConnectionEStats</code> for raw <code>DataBytesOut</code> and <code>DataBytesIn</code> counters, enriches PIDs via <code>sysinfo</code>, and maps Windows Service Control Manager (SCM) services with <code>EnumServicesStatusExW</code>.
+          </div>
+        </div>
+
+        <!-- Cell 2 (5 Cols): Live Snapshot Diff Simulator -->
+        <div class="bento-cell col-5">
+          <div class="cell-tag" style="justify-content: space-between; display: flex;">
+            <span>SNAPSHOT DIFF ENGINE // src/model.rs</span>
+            <button id="btn-trigger-diff" class="hud-btn" style="height: 24px; font-size: 0.68rem; padding: 0 8px;">⚡ INJECT BURST</button>
+          </div>
+          <h3>Deterministic State Diffing</h3>
+          <p>
+            <code>merge_snapshots()</code> diffs consecutive socket tables by 5-tuple identity <code>(Proto, LocalAddr:Port, RemoteAddr:Port)</code>, preserving <code>first_seen</code> ages and synthesizing ghost rows for closed connections.
+          </p>
+          <div id="diff-sim-box" class="diff-sim-box">
+            <div class="diff-line d-new"><span>+ TCP 192.168.1.111:54902 → 142.250.187.206:443</span><span>RowChange::New (age: 0s)</span></div>
+            <div class="diff-line d-chg"><span>~ TCP 192.168.1.111:50144 → 162.159.135.232:443</span><span>ESTAB → TIME_WAIT</span></div>
+            <div class="diff-line d-del"><span>- TCP 192.168.1.111:55104 → 93.184.216.34:443</span><span>RowChange::Deleted (1 tick)</span></div>
+          </div>
+        </div>
+
+        <!-- Cell 3 (4 Cols): Authenticode & SCM -->
+        <div class="bento-cell col-4">
+          <div class="cell-tag">SECURITY TELEMETRY // src/actions.rs</div>
+          <h3>WinVerifyTrust Authenticode &amp; SCM Unpacking</h3>
+          <p>
+            Inspect any socket to verify its executable's cryptographic signature via Windows <code>WinVerifyTrust</code>, resolve the SID token owner (<code>DOMAIN\User</code>), and unpack shared <code>svchost.exe</code> processes into exact service names.
+          </p>
+          <div class="code-terminal" style="font-size: 0.72rem; padding: 10px 12px;">PID 1420  svchost.exe [Service: Dnscache]
+Owner   : NT AUTHORITY\NETWORK SERVICE
+Sign    : ✔ Signed (Microsoft Windows)
+Spark   : ▁▂▃▅▇█▆▄▂▁▂▄▆█▇▅▃▂ (2m traffic)</div>
+        </div>
+
+        <!-- Cell 4 (4 Cols): Kernel ETW & EStats -->
+        <div class="bento-cell col-4">
+          <div class="cell-tag">KERNEL TRACE // src/etw.rs</div>
+          <h3>Event Tracing for Windows (<code>--etw</code>)</h3>
+          <p>
+            Polling alone misses sub-second connections. With <code>--etw</code> in an elevated shell, <code>tcptui</code> opens a real-time trace session on <code>Microsoft-Windows-Kernel-Network</code> for true connect timestamps and transient connection logging.
+          </p>
+          <div class="code-terminal" style="font-size: 0.72rem; padding: 10px 12px;">[21:14:08.412] ETW CONNECT pid=44910 curl.exe
+  192.168.1.111:55104 -> 93.184.216.34:443
+[21:14:08.609] ETW DISCONNECT (duration 197ms)</div>
+        </div>
+
+        <!-- Cell 5 (4 Cols): Rules, Alerts & Coloring -->
+        <div class="bento-cell col-4">
+          <div class="cell-tag">DETECTION STUDIO // src/config.rs</div>
+          <h3>Alert Triggers &amp; Wireshark Row Styling</h3>
+          <p>
+            Write any filter expression as an <strong>Alert Rule</strong> to fire a <code>⚠</code> banner, event log entry, and terminal bell on new sockets—or create ordered <strong>Coloring Rules</strong> with custom foreground, background, bold, and underline styles.
+          </p>
+          <div class="code-terminal" style="font-size: 0.72rem; padding: 10px 12px;">⚠ ALERT: "rport=4444 or rport=1337"
+Matched: powershell.exe (PID 29104)
+Style  : fg=#ff2e55 bold=true bell=on</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         03 // LIVE FILTER AST COMPILER & QUERY WORKSTATION
+         ====================================================================== -->
+    <section class="filter-workstation" id="filter-engine">
+      <div class="section-banner" style="padding: 0 0 24px 0; border-bottom: none;">
+        <div>
+          <div class="section-coord">03 // STRUCTURED FILTER LANGUAGE &amp; AST PARSER (src/filter.rs)</div>
+          <h2 data-i18n="filter_title">Test the 17-Field Query Compiler Live.</h2>
+        </div>
+        <p>
+          Supports exact &amp; wildcard matching (<code>*</code>, <code>?</code>), substring (<code>:</code>), regex (<code>=~</code>, <code>!~</code>), numeric &amp; byte-unit comparisons (<code>&gt;10MB</code>), and nested boolean logic (<code>and</code>, <code>or</code>, <code>not</code>, parentheses).
+        </p>
+      </div>
+
+      <div class="query-console">
+        <div class="query-bar">
+          <span class="query-prompt">filter &gt;</span>
+          <input
+            id="ast-query-input"
+            type="text"
+            class="query-input"
+            value="proto=tcp and (port=443 or port=5432) and loopback=false"
+            placeholder="Type any tcptui filter expression..."
+            spellcheck="false"
+          />
+          <span id="ast-status-badge" class="query-badge ok">7 / 16 MATCHED</span>
+        </div>
+
+        <div class="query-presets">
+          <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); margin-right: 6px;">TEST QUERIES:</span>
+          <button class="chip-btn" data-ast-query="proto=tcp and (port=443 or port=5432) and loopback=false">HTTPS + Postgres External</button>
+          <button class="chip-btn" data-ast-query="process:chrome and rx>1MB">Chrome &gt; 1MiB Rx</button>
+          <button class="chip-btn" data-ast-query="process=~^(Code|cargo|node) and connected=true">Active Dev Tools (Regex)</button>
+          <button class="chip-btn" data-ast-query="service!=&quot;&quot; or pid<1500">System &amp; SCM Services</button>
+          <button class="chip-btn" data-ast-query="change=new or state=close">New or Closing Sockets</button>
+          <button class="chip-btn" data-ast-query="addr=127.0.0.1 and state=listen">Local Listeners</button>
+          <button class="chip-btn" data-ast-query="">Reset (Show All)</button>
+        </div>
+
+        <!-- Live Tokenized AST Stream -->
+        <div id="ast-token-ribbon" class="ast-ribbon"></div>
+
+        <!-- Live Filtered Output Table -->
+        <div class="tech-table-wrap">
+          <table class="tech-table">
             <thead>
               <tr>
                 <th>Process</th>
                 <th>PID</th>
                 <th>Proto</th>
-                <th>Local Endpoint</th>
-                <th>Remote Endpoint</th>
+                <th>Local Address:Port</th>
+                <th>Remote Address:Port</th>
                 <th>State</th>
-                <th>Service</th>
-                <th>Tx</th>
-                <th>Rx</th>
-                <th>Change</th>
-                <th>Country</th>
+                <th>SCM Service</th>
+                <th>Tx Bytes</th>
+                <th>Rx Bytes</th>
+                <th>Diff State</th>
+                <th>GeoIP</th>
               </tr>
             </thead>
-            <tbody id="playground-tbody"></tbody>
+            <tbody id="ast-table-body"></tbody>
           </table>
         </div>
       </div>
+    </section>
 
-      <!-- Filter Grammar & Fields Reference -->
-      <div class="grid-2">
+    <!-- ======================================================================
+         04 // INTERACTIVE PHYSICAL KEYBOARD DECK
+         ====================================================================== -->
+    <section class="keyboard-section" id="keyboard-deck">
+      <div class="section-banner" style="padding: 0 0 24px 0; border-bottom: none;">
         <div>
-          <h3 style="margin-bottom: 12px; font-size: 1.1rem;">Formal Filter Grammar &amp; Syntax Examples</h3>
-          <pre class="code-block"><span class="comment"># Grammar (src/filter.rs)</span>
-expr    := or
-or      := and ( (<span class="kw">"or"</span> | <span class="kw">"||"</span>) and )*
-and     := not ( (<span class="kw">"and"</span> | <span class="kw">"&&"</span>) not )*
-not     := (<span class="kw">"not"</span> | <span class="kw">"!"</span>) not | primary
-primary := <span class="kw">"("</span> expr <span class="kw">")"</span> | field op value | word
-op      := <span class="kw">"=" "==" "!=" "&gt;" "&gt;=" "&lt;" "&lt;=" ":" "=~" "!~"</span>
-
-<span class="comment"># Practical Examples</span>
-<span class="kw">process</span>=<span class="str">chrome*</span>             <span class="comment"># wildcard match (* and ?)</span>
-<span class="kw">process</span>:<span class="str">chrome</span>              <span class="comment"># case-insensitive substring</span>
-<span class="kw">process</span>=~<span class="str">^(chrome|msedge)</span>   <span class="comment"># regular expression (!~ negates)</span>
-<span class="kw">state</span>=<span class="str">close</span>                 <span class="comment"># prefix match (matches CLOSE_WAIT)</span>
-<span class="kw">pid</span>&gt;<span class="num">1000</span> <span class="kw">and</span> <span class="kw">tx</span>&gt;<span class="num">10MB</span>        <span class="comment"># numeric &amp; byte units (b/kb/mb/gb)</span>
-<span class="kw">addr</span>=<span class="str">192.168.*</span> <span class="kw">and</span> <span class="kw">port</span>=<span class="num">443</span> <span class="comment"># matches either local or remote side</span>
-<span class="kw">service</span>=<span class="str">"WinHttpAutoProxySvc"</span> <span class="comment"># quoted strings with spaces</span></pre>
+          <div class="section-coord">04 // TACTILE KEYMAP EXPLORER</div>
+          <h2 data-i18n="kb_title">Interactive Keyboard Deck</h2>
         </div>
-
-        <div>
-          <h3 style="margin-bottom: 12px; font-size: 1.1rem;">Supported Filter Fields (17 Categories)</h3>
-          <div class="playground-table-wrap" style="max-height: 335px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md);">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Field</th>
-                  <th>Aliases</th>
-                  <th>Type</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td><code>process</code></td><td><code>proc</code>, <code>name</code></td><td>Text</td><td>Owning process executable name</td></tr>
-                <tr><td><code>path</code></td><td><code>exe</code></td><td>Text</td><td>Full filesystem path of process</td></tr>
-                <tr><td><code>pid</code></td><td>—</td><td>Numeric</td><td>Process ID</td></tr>
-                <tr><td><code>proto</code></td><td><code>protocol</code></td><td>Text</td><td><code>tcp</code> or <code>udp</code></td></tr>
-                <tr><td><code>state</code></td><td>—</td><td>Text</td><td>TCP state (supports prefix match)</td></tr>
-                <tr><td><code>laddr</code></td><td><code>local_addr</code></td><td>Text/IP</td><td>Local IPv4 or IPv6 address</td></tr>
-                <tr><td><code>raddr</code></td><td><code>remote_addr</code></td><td>Text/IP</td><td>Remote IPv4/IPv6 or resolved host</td></tr>
-                <tr><td><code>addr</code></td><td><code>address</code></td><td>Text/IP</td><td>Matches either <code>laddr</code> or <code>raddr</code></td></tr>
-                <tr><td><code>lport</code></td><td><code>local_port</code></td><td>Numeric</td><td>Local port number (0–65535)</td></tr>
-                <tr><td><code>rport</code></td><td><code>remote_port</code></td><td>Numeric</td><td>Remote port number (0–65535)</td></tr>
-                <tr><td><code>port</code></td><td>—</td><td>Numeric</td><td>Matches either <code>lport</code> or <code>rport</code></td></tr>
-                <tr><td><code>service</code></td><td><code>svc</code></td><td>Text</td><td>Hosted Windows SCM service name</td></tr>
-                <tr><td><code>tx</code></td><td><code>sent</code></td><td>Bytes</td><td>Transmitted bytes (supports KB/MB/GB)</td></tr>
-                <tr><td><code>rx</code></td><td><code>received</code></td><td>Bytes</td><td>Received bytes (supports KB/MB/GB)</td></tr>
-                <tr><td><code>change</code></td><td>—</td><td>Enum</td><td><code>new</code>, <code>changed</code>, <code>deleted</code>, <code>unchanged</code></td></tr>
-                <tr><td><code>loopback</code></td><td>—</td><td>Boolean</td><td><code>true</code> if address is loopback</td></tr>
-                <tr><td><code>connected</code></td><td>—</td><td>Boolean</td><td><code>true</code> if TCP state is ESTABLISHED</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========================================================================
-       Dual Binary Reference: tcptui & tcpvcon
-       ======================================================================== -->
-  <section class="section" id="cli-reference">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-eyebrow" data-i18n="cli_eyebrow">DUAL BINARIES INCLUDED</span>
-        <h2 class="section-title" data-i18n="cli_title">tcptui Interactive TUI &amp; tcpvcon CLI Companion</h2>
-        <p class="section-desc" data-i18n="cli_desc">
-          Ships with both the interactive terminal UI (<code>tcptui.exe</code>) and a script-friendly command-line companion (<code>tcpvcon.exe</code>) supporting CSV, JSON, and structured filters.
+        <p>
+          Click any highlighted keycap below (or press keys directly on your keyboard) to inspect its binding and trigger it inside the live workstation.
         </p>
       </div>
 
-      <div class="grid-2">
-        <!-- tcptui CLI Options -->
-        <div class="card">
-          <h3><code>tcptui.exe</code> Command-Line Flags <kbd>TUI</kbd></h3>
-          <p style="margin-bottom: 16px;">Hand-rolled zero-dependency argument parser supporting both <code>--key value</code> and <code>--key=value</code> forms.</p>
-          <div class="playground-table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Option</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td><code>--interval &lt;MS&gt;</code></td><td>Snapshot refresh rate in ms (<code>250..=60000</code>, default <code>1000</code>)</td></tr>
-                <tr><td><code>--filter &lt;EXPR&gt;</code></td><td>Apply a plain, <code>re:</code>, or structured filter at startup</td></tr>
-                <tr><td><code>--theme &lt;NAME&gt;</code></td><td><code>dark</code>, <code>light</code>, <code>gruvbox</code>, <code>nord</code>, <code>solarized-dark</code>, <code>solarized-light</code></td></tr>
-                <tr><td><code>--no-resolve</code></td><td>Start with reverse DNS hostname resolution disabled</td></tr>
-                <tr><td><code>--tcp</code> / <code>--udp</code></td><td>Restrict view to TCP-only or UDP-only at launch</td></tr>
-                <tr><td><code>--etw</code></td><td>Enable experimental ETW kernel connection tracking (Administrator)</td></tr>
-                <tr><td><code>--dump-frame &lt;FILE&gt;</code></td><td>Render one live frame as plain text to <code>FILE</code> and exit</td></tr>
-                <tr><td><code>--frame-size &lt;WxH&gt;</code></td><td>Dimensions for <code>--dump-frame</code> (default <code>120x30</code>, range <code>20..=500</code>×<code>10..=200</code>)</td></tr>
-                <tr><td><code>-h, --help</code> / <code>-V</code></td><td>Print usage information or package version</td></tr>
-              </tbody>
-            </table>
+      <div class="kb-layout">
+        <div class="kb-chassis">
+          <!-- Row 1: Function & Number Presets -->
+          <div class="kb-row">
+            <button class="kb-key mapped" data-key="Esc">Esc</button>
+            <button class="kb-key mapped" data-key="1">1</button>
+            <button class="kb-key mapped" data-key="2">2</button>
+            <button class="kb-key mapped" data-key="3">3</button>
+            <button class="kb-key mapped" data-key="4">4</button>
+            <button class="kb-key mapped" data-key="5">5</button>
+            <button class="kb-key mapped" data-key="6">6</button>
+            <button class="kb-key mapped" data-key="7">7</button>
+            <button class="kb-key mapped" data-key="8">8</button>
+            <button class="kb-key mapped-view" data-key="F5">F5</button>
+            <button class="kb-key mapped-view" data-key="F6">F6</button>
+          </div>
+          <!-- Row 2: QWERTY -->
+          <div class="kb-row">
+            <button class="kb-key w-wide mapped-view" data-key="Tab">Tab</button>
+            <button class="kb-key mapped" data-key="q">Q</button>
+            <button class="kb-key mapped-action" data-key="w">W</button>
+            <button class="kb-key mapped-action" data-key="e">E</button>
+            <button class="kb-key mapped" data-key="r">R</button>
+            <button class="kb-key mapped" data-key="t">T</button>
+            <button class="kb-key">Y</button>
+            <button class="kb-key mapped" data-key="u">U</button>
+            <button class="kb-key mapped-view" data-key="i">I</button>
+            <button class="kb-key mapped-view" data-key="o">O</button>
+            <button class="kb-key mapped-view active" data-key="p">P</button>
+          </div>
+          <!-- Row 3: ASDF -->
+          <div class="kb-row">
+            <button class="kb-key mapped-view" data-key="A">A</button>
+            <button class="kb-key mapped" data-key="s">S</button>
+            <button class="kb-key">D</button>
+            <button class="kb-key mapped" data-key="Ctrl+F">^F</button>
+            <button class="kb-key mapped-view" data-key="G">G</button>
+            <button class="kb-key mapped" data-key="?">H / ?</button>
+            <button class="kb-key mapped" data-key="j/k">J/K</button>
+            <button class="kb-key mapped-action" data-key="K">Shift+K</button>
+            <button class="kb-key mapped" data-key="L">L</button>
+            <button class="kb-key w-wide mapped-view" data-key="Enter">Enter</button>
+          </div>
+          <!-- Row 4: ZXCV -->
+          <div class="kb-row">
+            <button class="kb-key w-wide mapped-view" data-key="Ctrl+P">Ctrl+P</button>
+            <button class="kb-key mapped" data-key="x">X</button>
+            <button class="kb-key mapped-action" data-key="c">C</button>
+            <button class="kb-key mapped-action" data-key="V">V</button>
+            <button class="kb-key mapped-view" data-key="B">B</button>
+            <button class="kb-key mapped" data-key="n">N</button>
+            <button class="kb-key mapped-view" data-key="M">M</button>
+            <button class="kb-key mapped" data-key="/">/</button>
+            <button class="kb-key w-space mapped-action" data-key="Space">SPACE (MARK ROW)</button>
           </div>
         </div>
 
-        <!-- tcpvcon CLI Companion -->
-        <div class="card">
-          <h3><code>tcpvcon.exe</code> Headless CLI Companion <kbd>CLI</kbd></h3>
-          <p style="margin-bottom: 14px;">
-            Mirrors Sysinternals <code>tcpvcon</code> for automation, CI smoke tests, and security auditing, enhanced with JSON output and the full <code>tcptui</code> structured filter engine.
-          </p>
-
-          <div class="install-tabs" style="border-radius: var(--radius-sm); margin-bottom: 12px;">
-            <button class="install-tab active" data-tcpvcon-tab="table">Fixed-Width Table</button>
-            <button class="install-tab" data-tcpvcon-tab="csv">CSV Output (-c)</button>
-            <button class="install-tab" data-tcpvcon-tab="json">JSON + Filter (-j --filter)</button>
+        <div class="kb-inspector">
+          <div>
+            <div class="section-coord" style="margin-bottom: 10px;">KEY BINDING TELEMETRY</div>
+            <div id="kb-display-cap" class="kb-big-key">p / P</div>
+            <h3 id="kb-display-title" style="font-family: var(--font-display); font-size: 1.35rem; color: var(--text-bright); margin-bottom: 8px;">
+              Pause Live Updates (p) · View Profiles (P)
+            </h3>
+            <p id="kb-display-desc" style="color: var(--text-dim); font-size: 0.92rem; line-height: 1.6;">
+              Pressing <code>p</code> freezes the live endpoint table, statistics, and bandwidth chart for undisturbed inspection while ETW connect events continue buffering in the background. Pressing <code>Shift+P</code> opens the Named View Profiles manager with TOML import/export.
+            </p>
           </div>
 
-          <pre id="tcpvcon-output-pre" class="code-block" style="max-height: 260px;">$ tcpvcon -a -n
-Process            PID    Proto Local Address                  L-Port Remote Address                 R-Port State
------------------- ------ ----- ------------------------------ ------ ------------------------------ ------ -------------
-Code.exe           35668  TCP   127.0.0.1                      6907   0.0.0.0                        0      LISTEN
-Code.exe           35668  TCP   192.168.1.111                  51892  140.82.121.4                   443    ESTABLISHED
-WireGuard.exe      6104   UDP   0.0.0.0                        51820                                        
-cargo.exe          41204  TCP   192.168.1.111                  55012  151.101.1.69                   443    ESTABLISHED
-chrome.exe         39496  TCP   192.168.1.111                  54720  142.250.187.206                443    ESTABLISHED
-postgres.exe       8840   TCP   127.0.0.1                      5432   127.0.0.1                      53110  ESTABLISHED</pre>
+          <div style="border-top: 1px solid var(--line-dim); padding-top: 14px; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-muted);">
+            <span><span style="color: var(--cyan);">■</span> Navigation/Filter</span>
+            <span><span style="color: var(--green);">■</span> Views/Popups</span>
+            <span><span style="color: var(--amber);">■</span> Socket/Process Action</span>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- ========================================================================
-       Interactive Keymap & Mouse Controls Reference
-       ======================================================================== -->
-  <section class="section" id="keymap">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-eyebrow" data-i18n="keymap_eyebrow">KEYBOARD-FIRST &amp; MOUSE-AWARE</span>
-        <h2 class="section-title" data-i18n="keymap_title">Complete Keymap &amp; Mouse Controls</h2>
-        <p class="section-desc" data-i18n="keymap_desc">
-          Every action is reachable in one keystroke or via the fuzzy Command Palette (<code>Ctrl+P</code>). Full mouse support included.
+    <!-- ======================================================================
+         05 // HEADLESS tcpvcon CLI & CONFIG.TOML GENERATOR
+         ====================================================================== -->
+    <section class="split-section" id="cli-config">
+      <!-- Left Pane: tcpvcon & CLI -->
+      <div class="split-pane">
+        <div class="section-coord">05A // AUTOMATION &amp; SCRIPTING COMPANION</div>
+        <h3 style="font-family: var(--font-display); font-size: 1.6rem; color: var(--text-bright); margin-bottom: 10px;">
+          <code>tcpvcon.exe</code> — CLI Output Formats
+        </h3>
+        <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 18px;">
+          Ships alongside <code>tcptui.exe</code>. Supports positional process/PID filtering plus the full structured <code>--filter</code> expression engine in plain table, CSV, or JSON formats.
         </p>
-      </div>
 
-      <div class="keymap-controls">
-        <input
-          id="keymap-search-input"
-          type="text"
-          class="keymap-search"
-          placeholder="🔍 Search shortcuts by key or action (e.g. pause, whois, sort, mouse)..."
-        />
-        <span style="font-size: 0.84rem; color: var(--text-muted); font-family: var(--font-mono);">
-          Tip: Press <kbd class="keycap">Ctrl+P</kbd> inside tcptui to fuzzy-search all 22 commands
-        </span>
-      </div>
-
-      <div class="playground-box">
-        <div class="playground-table-wrap" style="max-height: 480px;">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Key / Input</th>
-                <th>Category</th>
-                <th>Action &amp; Behavior</th>
-              </tr>
-            </thead>
-            <tbody id="keymap-tbody">
-              <tr><td><kbd class="keycap">?</kbd> / <kbd class="keycap">H</kbd></td><td>General</td><td>Open two-column scrollable Help popup</td></tr>
-              <tr><td><kbd class="keycap">Ctrl+P</kbd></td><td>General</td><td>Open Command Palette with fuzzy subsequence search over 22 actions</td></tr>
-              <tr><td><kbd class="keycap">p</kbd></td><td>Monitoring</td><td>Pause / resume live snapshot updates (shows <code>PAUSED</code> in title bar)</td></tr>
-              <tr><td><kbd class="keycap">F5</kbd></td><td>Monitoring</td><td>Trigger an immediate manual snapshot refresh</td></tr>
-              <tr><td><kbd class="keycap">+</kbd> / <kbd class="keycap">-</kbd></td><td>Monitoring</td><td>Increase / decrease snapshot refresh interval (250 ms – 60 s)</td></tr>
-              <tr><td><kbd class="keycap">/</kbd></td><td>Filtering</td><td>Open interactive structured filter prompt with Up/Down history &amp; live count</td></tr>
-              <tr><td><kbd class="keycap">1</kbd> – <kbd class="keycap">8</kbd></td><td>Filtering</td><td>Quick filter presets: 1:TCP, 2:UDP, 3:ESTABLISHED, 4:LISTEN, 5:Loopback, 6:Non-Loopback, 7:New, 8:Clear</td></tr>
-              <tr><td><kbd class="keycap">Ctrl+F</kbd> · <kbd class="keycap">n</kbd> / <kbd class="keycap">N</kbd></td><td>Search</td><td>Incremental cell highlight search · jump to next / previous match</td></tr>
-              <tr><td><kbd class="keycap">s</kbd> · <kbd class="keycap">S</kbd> · <kbd class="keycap">o</kbd></td><td>Sorting</td><td>Cycle primary sort column · reverse sort direction · open multi-key Sort Order Editor</td></tr>
-              <tr><td><kbd class="keycap">G</kbd></td><td>Views</td><td>Toggle hierarchical Grouped Process Tree view (<code>Enter</code> expands/collapses nodes)</td></tr>
-              <tr><td><kbd class="keycap">F6</kbd></td><td>Views</td><td>Watch mode: lock table to the currently selected process PID</td></tr>
-              <tr><td><kbd class="keycap">C</kbd> · <kbd class="keycap">P</kbd> · <kbd class="keycap">M</kbd></td><td>Views &amp; Config</td><td>Column Setup (order/visibility) · Named View Profiles (TOML import/export) · Settings Screen</td></tr>
-              <tr><td><kbd class="keycap">t</kbd> · <kbd class="keycap">u</kbd> · <kbd class="keycap">U</kbd> · <kbd class="keycap">L</kbd> · <kbd class="keycap">r</kbd></td><td>Toggles</td><td>Toggle TCP · UDP · Unconnected endpoints · Loopback · Reverse DNS hostname resolution</td></tr>
-              <tr><td><kbd class="keycap">B</kbd></td><td>Analytics</td><td>Open rolling EStats Bandwidth Chart (<code>Tab</code> switches Total System vs Selected Endpoint)</td></tr>
-              <tr><td><kbd class="keycap">A</kbd></td><td>Rules</td><td>Open Alert Rules &amp; Wireshark-style Coloring Rules editor</td></tr>
-              <tr><td><kbd class="keycap">Enter</kbd> · <kbd class="keycap">i</kbd> · <kbd class="keycap">g</kbd></td><td>Inspection</td><td>Process details (Authenticode + 2m sparkline) · System Statistics · Event Log (with <code>/</code> filter &amp; <code>E</code> export)</td></tr>
-              <tr><td><kbd class="keycap">Space</kbd> · <kbd class="keycap">Shift+↑/↓</kbd></td><td>Selection</td><td>Mark/unmark current row · range-mark multiple rows for batch close/kill/copy</td></tr>
-              <tr><td><kbd class="keycap">c</kbd> · <kbd class="keycap">K</kbd></td><td>Actions</td><td>Close TCP connection via <code>SetTcpEntry</code> · Terminate owning process (supports batch marks)</td></tr>
-              <tr><td><kbd class="keycap">w</kbd> · <kbd class="keycap">V</kbd></td><td>Threat Intel</td><td>Run RFC 3912 <code>whois</code> referral query on remote IP · Query VirusTotal reputation</td></tr>
-              <tr><td><kbd class="keycap">Ctrl+C</kbd> · <kbd class="keycap">Ctrl+Shift+C</kbd> · <kbd class="keycap">e</kbd></td><td>Clipboard &amp; Export</td><td>Copy selected row (or TSV of marked rows) · Copy entire table · Export to CSV / TSV / JSON / TXT</td></tr>
-              <tr><td><kbd class="keycap">x</kbd></td><td>Reset</td><td>Clear all row marks, acknowledge pending alerts, and clear active filter</td></tr>
-              <tr><td><kbd class="keycap">Mouse Click / Drag</kbd></td><td>Mouse</td><td>Click header to sort (<code>Shift+Click</code> appends sort key), drag header border to resize column, right-click row for Context Menu, <code>Shift+Wheel</code> horizontal scroll</td></tr>
-            </tbody>
-          </table>
+        <div class="mode-pills" style="margin-bottom: 12px;">
+          <button class="mode-btn active" data-cli-tab="json">JSON (-a -j --filter)</button>
+          <button class="mode-btn" data-cli-tab="csv">CSV (-a -c -n)</button>
+          <button class="mode-btn" data-cli-tab="table">Fixed Table (-a -n)</button>
+          <button class="mode-btn" data-cli-tab="dump">Headless Frame (--dump-frame)</button>
         </div>
-      </div>
-    </div>
-  </section>
 
-  <!-- ========================================================================
-       Interactive Configuration Builder (config.toml)
-       ======================================================================== -->
-  <section class="section" id="config">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-eyebrow" data-i18n="config_eyebrow">PERSISTENT CONFIGURATION</span>
-        <h2 class="section-title" data-i18n="config_title">Interactive config.toml Generator</h2>
-        <p class="section-desc" data-i18n="config_desc">
-          Customize your default view, refresh interval, theme, GeoIP database, ETW kernel tracking, and rules — persisted automatically at <code>%APPDATA%\tcptui\config.toml</code>.
+        <pre id="cli-preview-box" class="code-terminal" style="min-height: 310px;"></pre>
+      </div>
+
+      <!-- Right Pane: Interactive config.toml Studio -->
+      <div class="split-pane">
+        <div class="section-coord">05B // PERSISTENT PROFILE STUDIO (%APPDATA%\tcptui\config.toml)</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h3 style="font-family: var(--font-display); font-size: 1.6rem; color: var(--text-bright);">
+            Live <code>config.toml</code> Synthesizer
+          </h3>
+          <button id="btn-copy-toml" class="hud-btn hud-btn-primary">COPY TOML</button>
+        </div>
+        <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
+          Toggle parameters below to generate a ready-to-drop configuration file with custom alert and Wireshark coloring rules.
         </p>
-      </div>
 
-      <div class="config-builder">
-        <div class="config-form">
-          <h3 style="margin-bottom: 6px;">Customize Settings</h3>
-          <div class="form-row">
-            <label for="cfg-interval">Refresh Interval (ms)</label>
-            <input id="cfg-interval" type="number" class="cfg-control" value="1000" min="250" max="60000" step="250" />
-          </div>
-          <div class="form-row">
-            <label for="cfg-theme">Color Theme</label>
-            <select id="cfg-theme" class="cfg-control">
+        <div class="cfg-grid">
+          <label class="cfg-item">
+            <span>refresh_interval_ms</span>
+            <input id="c-interval" type="number" class="cfg-input" value="1000" min="250" max="60000" step="250" />
+          </label>
+          <label class="cfg-item">
+            <span>view.theme</span>
+            <select id="c-theme" class="cfg-input">
               <option value="dark">dark</option>
               <option value="gruvbox">gruvbox</option>
               <option value="nord">nord</option>
@@ -530,138 +644,43 @@ postgres.exe       8840   TCP   127.0.0.1                      5432   127.0.0.1 
               <option value="solarized-light">solarized-light</option>
               <option value="light">light</option>
             </select>
-          </div>
-          <div class="form-row">
-            <label for="cfg-resolve">Reverse DNS Resolution</label>
-            <input id="cfg-resolve" type="checkbox" class="cfg-control" />
-          </div>
-          <div class="form-row">
-            <label for="cfg-loopback">Show Loopback Endpoints</label>
-            <input id="cfg-loopback" type="checkbox" class="cfg-control" checked />
-          </div>
-          <div class="form-row">
-            <label for="cfg-estats">Enable TCP EStats Counters</label>
-            <input id="cfg-estats" type="checkbox" class="cfg-control" checked />
-          </div>
-          <div class="form-row">
-            <label for="cfg-geoip">Enable GeoIP Country Column</label>
-            <input id="cfg-geoip" type="checkbox" class="cfg-control" checked />
-          </div>
-          <div class="form-row">
-            <label for="cfg-etw">Experimental ETW Kernel Mode</label>
-            <input id="cfg-etw" type="checkbox" class="cfg-control" />
-          </div>
-          <div class="form-row">
-            <label for="cfg-bell">Terminal Bell on Alert Match</label>
-            <input id="cfg-bell" type="checkbox" class="cfg-control" checked />
-          </div>
-          <button id="config-copy-btn" class="btn btn-primary" style="margin-top: 10px; justify-content: center;">
-            Copy Generated config.toml
-          </button>
+          </label>
+          <label class="cfg-item">
+            <span>resolve_addresses (DNS)</span>
+            <input id="c-resolve" type="checkbox" class="cfg-input" />
+          </label>
+          <label class="cfg-item">
+            <span>estats.enabled (Tx/Rx)</span>
+            <input id="c-estats" type="checkbox" class="cfg-input" checked />
+          </label>
+          <label class="cfg-item">
+            <span>etw.enabled (Kernel)</span>
+            <input id="c-etw" type="checkbox" class="cfg-input" checked />
+          </label>
+          <label class="cfg-item">
+            <span>notifications.bell</span>
+            <input id="c-bell" type="checkbox" class="cfg-input" checked />
+          </label>
         </div>
 
-        <div>
-          <pre id="config-toml-output" class="code-block" style="min-height: 410px;"></pre>
-        </div>
+        <pre id="toml-preview-box" class="code-terminal" style="min-height: 225px; max-height: 250px;"></pre>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- ========================================================================
-       Architecture & Release Changelog Timeline
-       ======================================================================== -->
-  <section class="section" id="architecture">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-eyebrow" data-i18n="arch_eyebrow">INTERNALS &amp; ENGINEERING</span>
-        <h2 class="section-title" data-i18n="arch_title">Zero-Async Architecture &amp; Release Timeline</h2>
-        <p class="section-desc" data-i18n="arch_desc">
-          Clean separation between socket enumeration, snapshot diffing, DNS/GeoIP background workers, and deterministic Ratatui rendering.
-        </p>
-      </div>
-
-      <div class="arch-pipeline">
-        <div class="arch-step">
-          <div class="arch-step-num">01 · COLLECTOR THREAD</div>
-          <h4><code>net.rs</code> · <code>proc.rs</code> · <code>services.rs</code></h4>
-          <p>Polls IPv4/IPv6 TCP &amp; UDP tables via <code>netstat2</code> &amp; Win32 IP Helper EStats, enriches PIDs via <code>sysinfo</code>, and maps Windows SCM services.</p>
-        </div>
-        <div class="arch-step">
-          <div class="arch-step-num">02 · KERNEL &amp; ENRICHMENT</div>
-          <h4><code>etw.rs</code> · <code>dns.rs</code> · <code>geoip.rs</code></h4>
-          <p>Optional <code>Microsoft-Windows-Kernel-Network</code> ETW trace session, non-blocking per-lookup DNS threads, and MaxMind GeoLite2 Country reader.</p>
-        </div>
-        <div class="arch-step">
-          <div class="arch-step-num">03 · STATE &amp; QUERY ENGINE</div>
-          <h4><code>model.rs</code> · <code>filter.rs</code> · <code>app.rs</code></h4>
-          <p>Computes snapshot diffs (new/changed/deleted), preserves first-seen ages, evaluates structured filter ASTs, alerts, and coloring rules.</p>
-        </div>
-        <div class="arch-step">
-          <div class="arch-step-num">04 · DETERMINISTIC TUI</div>
-          <h4><code>events.rs</code> · <code>ui/table.rs</code> · <code>ui/popups.rs</code></h4>
-          <p>Pure <code>event → state → render</code> loop backed by Ratatui &amp; Crossterm, tested with headless <code>TestBackend</code> and fuzz-tested filter round-trips.</p>
-        </div>
-      </div>
-
-      <!-- Changelog Timeline -->
-      <h3 style="margin: 44px 0 22px; font-size: 1.35rem;">Release History</h3>
-      <div class="timeline">
-        <div class="timeline-item">
-          <div class="timeline-head">
-            <span class="timeline-version">v1.3.0 — Latest</span>
-            <span class="timeline-date">2026-10-13</span>
-          </div>
-          <ul class="timeline-list">
-            <li><strong>Headless Frame Dumping (<code>--dump-frame &lt;FILE&gt; [--frame-size WxH]</code>)</strong>: Render live frames as text without a terminal for screenshots and golden tests.</li>
-            <li><strong>Command Palette (<code>Ctrl+P</code>)</strong>: Fuzzy subsequence search across all 22 actions.</li>
-            <li><strong>Smart Clipboard &amp; Profile Import/Export</strong>: <code>Ctrl+C</code> copies TSV of marked rows; JSON row copy in context menu; TOML profile export/import (<code>P</code> popup).</li>
-            <li><strong>Process Traffic Sparkline</strong>: 2-minute Unicode block sparkline in Process Details popup + deterministic 2,000-expression filter fuzz test &amp; <code>cargo audit</code> in CI.</li>
-          </ul>
-        </div>
-
-        <div class="timeline-item">
-          <div class="timeline-head">
-            <span class="timeline-version">v1.2.0</span>
-            <span class="timeline-date">2026-10-13</span>
-          </div>
-          <ul class="timeline-list">
-            <li><strong>Mouse Ergonomics</strong>: Horizontal table scrolling (<code>Shift+Wheel</code>), draggable column border resizing, and right-click row context menu.</li>
-            <li><strong>Actionable Process Groups</strong>: Expand/collapse, kill, whois, VirusTotal, and inspect details directly on grouped tree headers.</li>
-            <li><strong>Event Log Filtering &amp; Export</strong>: Inline substring filter (<code>/</code>) and timestamped log file export (<code>E</code>).</li>
-          </ul>
-        </div>
-
-        <div class="timeline-item">
-          <div class="timeline-head">
-            <span class="timeline-version">v1.1.0 &amp; v1.0.0</span>
-            <span class="timeline-date">2026-10-13</span>
-          </div>
-          <ul class="timeline-list">
-            <li><strong>Pause/Resume Live Updates (<code>p</code>)</strong> &amp; balanced two-column Help grid (<code>?</code>).</li>
-            <li><strong>1.0 Milestone</strong>: Category-based structured filter language, multi-key sort editor (<code>o</code>), EStats bandwidth chart (<code>B</code>), alert &amp; Wireshark coloring rules (<code>A</code>), GeoIP flags, Authenticode verification, experimental ETW mode (<code>--etw</code>), VirusTotal integration, and 6 built-in color themes.</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========================================================================
-       Footer
-       ======================================================================== -->
-  <footer class="site-footer">
-    <div class="container footer-inner">
+    <!-- Footer -->
+    <footer class="site-footer">
       <div>
-        <strong>tcptui</strong> — Terminal UI clone of Sysinternals TCPView for Windows, written in Rust.<br />
-        <span>Released under the <a href="https://github.com/sametcn99/tcptui/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> · Created by <a href="https://github.com/sametcn99" target="_blank" rel="noopener">@sametcn99</a></span>
+        <strong style="color: var(--text-bright);">tcptui v1.3.0</strong> // Written in Rust with Ratatui for Windows · MIT License · By <a href="https://github.com/sametcn99" target="_blank" rel="noopener">@sametcn99</a>
       </div>
       <div class="footer-links">
-        <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener">Repository</a>
-        <a href="https://github.com/sametcn99/tcptui/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/sametcn99/tcptui/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
-        <a href="https://github.com/sametcn99/tcptui/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener">SOURCE</a>
+        <a href="https://github.com/sametcn99/tcptui/releases" target="_blank" rel="noopener">RELEASES</a>
+        <a href="https://github.com/sametcn99/tcptui/blob/main/CHANGELOG.md" target="_blank" rel="noopener">CHANGELOG</a>
+        <a href="https://github.com/sametcn99/tcptui/issues" target="_blank" rel="noopener">ISSUES</a>
       </div>
-    </div>
-  </footer>
+    </footer>
+
+  </main>
 
   <script src="app.js"></script>
 </body>

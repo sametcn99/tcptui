@@ -341,11 +341,19 @@ function renderTuiWorkstation() {
       const container = document.getElementById('tui-body-container');
       if (menu && container && sel) {
         const rect = container.getBoundingClientRect();
-        const x = Math.min(e.clientX - rect.left, rect.width - 260);
-        const y = Math.min(e.clientY - rect.top + container.scrollTop, container.scrollHeight - 210);
+        const menuW = Math.min(255, Math.max(200, container.clientWidth - 16));
+        const menuH = 225;
+        const maxLeft = container.scrollLeft + Math.max(8, container.clientWidth - menuW - 8);
+        const rawLeft = e.clientX - rect.left + container.scrollLeft;
+        const x = Math.max(container.scrollLeft + 8, Math.min(rawLeft, maxLeft));
+
+        const maxTop = container.scrollTop + Math.max(8, container.clientHeight - menuH - 8);
+        const rawTop = e.clientY - rect.top + container.scrollTop;
+        const y = Math.max(container.scrollTop + 8, Math.min(rawTop, maxTop));
+
         title.textContent = `┌ ${sel.process} (${sel.pid}) ──┐`;
-        menu.style.left = `${Math.max(8, x)}px`;
-        menu.style.top = `${Math.max(8, y)}px`;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
         menu.classList.add('open');
       }
     });
@@ -424,10 +432,10 @@ function renderModalContent(mode) {
     const curRx = (rxHistory[rxHistory.length - 1] * 48.6).toFixed(1);
     contentEl.innerHTML = `<pre style="font-family: var(--font-mono); line-height: 1.5; white-space: pre-wrap;">
 <span style="color: var(--t-header); font-weight: 700;">▲ Tx (Sent)</span>      current: <strong>${curTx} KiB/s</strong>   peak: <strong>1.42 MiB/s</strong>   session total: <strong>108.4 MiB</strong>
-  <span style="color: var(--t-header); font-size: 1.15rem; letter-spacing: 1px;">${txBars}</span>
+  <span style="color: var(--t-header); font-size: clamp(0.68rem, 2.2vw, 1.15rem); letter-spacing: 1px;">${txBars}</span>
 
 <span style="color: var(--t-new); font-weight: 700;">▼ Rx (Received)</span>  current: <strong>${curRx} KiB/s</strong>   peak: <strong>6.84 MiB/s</strong>   session total: <strong>491.2 MiB</strong>
-  <span style="color: var(--t-new); font-size: 1.15rem; letter-spacing: 1px;">${rxBars}</span>
+  <span style="color: var(--t-new); font-size: clamp(0.68rem, 2.2vw, 1.15rem); letter-spacing: 1px;">${rxBars}</span>
 
 Selected Endpoint Focus [Tab]: <strong>${sel.process}</strong> (${sel.laddr}:${sel.lport} → ${sel.raddr}:${sel.rport})
 Endpoint Cumulative Counters : Tx <strong>${fmtBytes(sel.tx)}</strong> · Rx <strong>${fmtBytes(sel.rx)}</strong></pre>`;
@@ -555,9 +563,27 @@ function initOscilloscope() {
   const ctx = canvas.getContext('2d');
   let phase = 0;
 
+  function resizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.max(240, Math.round(rect.width || canvas.offsetWidth || 520));
+    const cssH = Math.max(54, Math.round(rect.height || 68));
+    const targetW = Math.round(cssW * dpr);
+    const targetH = Math.round(cssH * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
   function drawWave() {
-    const w = canvas.width;
-    const h = canvas.height;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+    ctx.save();
+    ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
     // Subtle oscilloscope grid
@@ -587,6 +613,7 @@ function initOscilloscope() {
       if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
+    ctx.restore();
 
     if (!tuiPaused) phase += 0.055;
     requestAnimationFrame(drawWave);
@@ -698,9 +725,35 @@ chrome.exe         39496  TCP   192.168.1.111                  54720  142.250.18
 document.addEventListener('DOMContentLoaded', () => {
   initOscilloscope();
 
-  // Close context menu on outside click
+  // --- Mobile Navigation Drawer ---
+  const mobileMenuBtn = document.getElementById('mobile-menu-toggle');
+  const mobileNavDrawer = document.getElementById('mobile-nav-drawer');
+
+  function setMobileDrawer(open) {
+    if (!mobileMenuBtn || !mobileNavDrawer) return;
+    mobileNavDrawer.classList.toggle('open', open);
+    mobileMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    mobileMenuBtn.textContent = open ? '✕' : '☰';
+  }
+
+  mobileMenuBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = mobileNavDrawer?.classList.contains('open');
+    setMobileDrawer(!isOpen);
+  });
+
+  mobileNavDrawer?.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', () => setMobileDrawer(false));
+  });
+
   document.addEventListener('click', (e) => {
+    if (!e.target.closest('.navbar')) setMobileDrawer(false);
     if (!e.target.closest('#tui-ctx-menu')) hideContextMenu();
+  });
+
+  window.addEventListener('resize', () => {
+    hideContextMenu();
+    if (window.innerWidth > 1024) setMobileDrawer(false);
   });
 
   // Context menu item execution

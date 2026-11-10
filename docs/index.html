@@ -20,13 +20,13 @@
   <div class="telemetry-bar">
     <div class="telemetry-group">
       <span class="telemetry-item"><span class="pulse-dot"></span> ENGINE: ONLINE</span>
-      <span class="telemetry-item">TARGET: x86_64-pc-windows-msvc</span>
-      <span class="telemetry-item">EDITION: RUST 2024 // RATATUI 0.30.2</span>
-      <span class="telemetry-item">WIN32_API: IpHlpApi · WinTrust · AdvApi32 · ETW</span>
+      <span class="telemetry-item hide-sm">TARGET: x86_64-pc-windows-msvc</span>
+      <span class="telemetry-item hide-md">EDITION: RUST 2024 // RATATUI 0.30.2</span>
+      <span class="telemetry-item hide-md">WIN32_API: IpHlpApi · WinTrust · AdvApi32 · ETW</span>
     </div>
     <div class="telemetry-group">
       <span class="telemetry-item" id="top-live-throughput">TX: 412.4 KiB/s · RX: 2.38 MiB/s</span>
-      <span class="telemetry-item" style="color: var(--cyan);">RELEASE: v1.3.0</span>
+      <span class="telemetry-item hide-xs" style="color: var(--cyan);">RELEASE: v1.3.0</span>
     </div>
   </div>
 
@@ -49,15 +49,24 @@
 
       <div class="nav-right">
         <button id="lang-switch" class="hud-btn" title="Switch Language (EN / TR)">TR // EN</button>
-        <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="hud-btn">
+        <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="hud-btn hide-sm">
           <span>↓ BINARIES</span>
         </a>
         <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener" class="hud-btn hud-btn-primary">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span>GITHUB</span>
+          <span class="hide-xs">GITHUB</span>
         </a>
+        <button id="mobile-menu-toggle" class="hud-btn mobile-menu-btn" aria-label="Toggle navigation menu" aria-expanded="false">☰</button>
       </div>
     </div>
+    <nav id="mobile-nav-drawer" class="mobile-nav-drawer" aria-label="Mobile Navigation">
+      <a href="#workstation" data-i18n="nav_workstation">01 // LIVE WORKSTATION</a>
+      <a href="#architecture" data-i18n="nav_arch">02 // ARCHITECTURE</a>
+      <a href="#filter-engine" data-i18n="nav_filter">03 // FILTER AST</a>
+      <a href="#keyboard-deck" data-i18n="nav_kb">04 // KEYDECK</a>
+      <a href="#cli-config" data-i18n="nav_cli">05 // CLI &amp; CONFIG</a>
+      <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="mobile-nav-cta">↓ DOWNLOAD v1.3.0 BINARIES</a>
+    </nav>
   </header>
 
   <main class="shell-wrap">
@@ -118,7 +127,7 @@
         <div class="oscilloscope-card">
           <div class="osc-header">
             <span>ESTATS_WAVEFORM // GetPerTcpConnectionEStats</span>
-            <span><span style="color: var(--cyan);">■ TX</span> · <span style="color: var(--green);">■ RX</span></span>
+            <span class="osc-legend"><span style="color: var(--cyan);">■ TX</span> · <span style="color: var(--green);">■ RX</span></span>
           </div>
           <canvas id="estats-canvas" width="520" height="68"></canvas>
         </div>
@@ -209,7 +218,7 @@
               <span>Administrator: tcptui.exe — --etw</span>
             </div>
           </div>
-          <div style="font-size: 0.68rem; color: #64748b;">RIGHT-CLICK ROW FOR CONTEXT MENU · DOUBLE-CLICK FOR AUTHENTICODE · CLICK HEADER TO SORT</div>
+          <div class="wt-chrome-hint" style="font-size: 0.68rem; color: #64748b;">RIGHT-CLICK ROW FOR CONTEXT MENU · DOUBLE-CLICK FOR AUTHENTICODE · CLICK HEADER TO SORT</div>
           <div class="wt-win-btns"><span>─</span><span>□</span><span>✕</span></div>
         </div>
 
@@ -380,7 +389,7 @@
 
         <!-- Cell 2 (5 Cols): Live Snapshot Diff Simulator -->
         <div class="bento-cell col-5">
-          <div class="cell-tag" style="justify-content: space-between; display: flex;">
+          <div class="cell-tag" style="justify-content: space-between; display: flex; flex-wrap: wrap; gap: 8px; width: 100%;">
             <span>SNAPSHOT DIFF ENGINE // src/model.rs</span>
             <button id="btn-trigger-diff" class="hud-btn" style="height: 24px; font-size: 0.68rem; padding: 0 8px;">⚡ INJECT BURST</button>
           </div>
@@ -619,7 +628,7 @@ Style  : fg=#ff2e55 bold=true bell=on</div>
       <!-- Right Pane: Interactive config.toml Studio -->
       <div class="split-pane">
         <div class="section-coord">05B // PERSISTENT PROFILE STUDIO (%APPDATA%\tcptui\config.toml)</div>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
           <h3 style="font-family: var(--font-display); font-size: 1.6rem; color: var(--text-bright);">
             Live <code>config.toml</code> Synthesizer
           </h3>

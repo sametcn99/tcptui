@@ -53,7 +53,7 @@ body {
   background-color: var(--bg-void);
   color: var(--text-main);
   line-height: 1.58;
-  overflow-x: hidden;
+  overflow-x: clip;
   position: relative;
 }
 
@@ -423,10 +423,17 @@ code, pre, kbd, .mono {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   font-family: var(--font-mono);
   font-size: 0.68rem;
   color: var(--text-dim);
   margin-bottom: 6px;
+}
+
+.osc-legend {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 #estats-canvas {
@@ -741,6 +748,7 @@ code, pre, kbd, .mono {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   background: #040609;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0 12px;
@@ -1601,7 +1609,242 @@ code, pre, kbd, .mono {
   gap: 20px;
 }
 
+/* ==========================================================================
+   Responsive Architecture & Device Breakpoints
+   ========================================================================== */
+
+/* Universal grid and child blowout prevention */
+.shell-wrap,
+.hero-grid,
+.hero-left,
+.hero-right,
+.bento-grid,
+.bento-cell,
+.split-section,
+.split-pane,
+.kb-layout,
+.kb-chassis,
+.kb-inspector,
+.query-console,
+.tech-table-wrap,
+.tui-viewport,
+.tui-body-container,
+.install-deck,
+.deck-body,
+.deck-cmd,
+.oscilloscope-card,
+.binary-split,
+.binary-card,
+.workstation-section,
+.workstation-toolbar,
+.workstation-toolbar > div,
+.section-banner > div,
+.ast-ribbon,
+.diff-sim-box,
+.arch-inspector {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.section-coord {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.section-coord::before {
+  flex-shrink: 0;
+}
+
+#tui-modal-content pre {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wt-tabs {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.wt-tab {
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.wt-tab span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wt-win-btns {
+  flex-shrink: 0;
+}
+
+/* Mobile navigation drawer & toggler */
+.mobile-menu-btn {
+  display: none;
+}
+
+.mobile-nav-drawer {
+  display: none;
+  flex-direction: column;
+  border-top: 1px solid var(--line-dim);
+  background: rgba(4, 6, 10, 0.98);
+  padding: 12px 16px 16px;
+  gap: 6px;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+
+.mobile-nav-drawer a {
+  display: block;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(22, 32, 50, 0.6);
+  transition: all 0.15s ease;
+}
+
+.mobile-nav-drawer a:hover,
+.mobile-nav-drawer a:active {
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.35);
+}
+
+.mobile-nav-drawer .mobile-nav-cta {
+  margin-top: 6px;
+  text-align: center;
+  background: var(--cyan);
+  color: #02060d !important;
+  font-weight: 700;
+  border-color: var(--cyan);
+}
+
+.mobile-nav-drawer .mobile-nav-cta:hover {
+  background: #62f6ff;
+}
+
+/* Visibility helpers */
+.hide-xs,
+.hide-sm,
+.hide-md {
+  display: inline-flex;
+}
+
+/* Layout polish */
+.shell-wrap {
+  width: 100%;
+  overflow-x: clip;
+}
+.kb-chassis {
+  justify-content: center;
+}
+.kb-inspector .section-coord {
+  display: flex;
+}
+.kb-big-key {
+  display: flex;
+  width: fit-content;
+}
+.kb-inspector > div:last-child {
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.code-terminal {
+  overflow: auto;
+}
+
+/* Custom sleek cyber-telemetry scrollbars */
+.deck-cmd,
+.tui-body-container,
+.tech-table-wrap,
+.code-terminal,
+.kb-chassis,
+.ast-ribbon,
+.ratatui-topbar,
+#tui-modal-content pre {
+  scrollbar-width: thin;
+  scrollbar-color: #23324d #04070d;
+}
+
+.deck-cmd::-webkit-scrollbar,
+.tui-body-container::-webkit-scrollbar,
+.tech-table-wrap::-webkit-scrollbar,
+.code-terminal::-webkit-scrollbar,
+.kb-chassis::-webkit-scrollbar,
+.ast-ribbon::-webkit-scrollbar,
+.ratatui-topbar::-webkit-scrollbar,
+#tui-modal-content pre::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.deck-cmd::-webkit-scrollbar-track,
+.tui-body-container::-webkit-scrollbar-track,
+.tech-table-wrap::-webkit-scrollbar-track,
+.code-terminal::-webkit-scrollbar-track,
+.kb-chassis::-webkit-scrollbar-track,
+.ast-ribbon::-webkit-scrollbar-track,
+.ratatui-topbar::-webkit-scrollbar-track,
+#tui-modal-content pre::-webkit-scrollbar-track {
+  background: #04070d;
+}
+
+.deck-cmd::-webkit-scrollbar-thumb,
+.tui-body-container::-webkit-scrollbar-thumb,
+.tech-table-wrap::-webkit-scrollbar-thumb,
+.code-terminal::-webkit-scrollbar-thumb,
+.kb-chassis::-webkit-scrollbar-thumb,
+.ast-ribbon::-webkit-scrollbar-thumb,
+.ratatui-topbar::-webkit-scrollbar-thumb,
+#tui-modal-content pre::-webkit-scrollbar-thumb {
+  background: #23324d;
+  border-radius: 3px;
+}
+
+.deck-cmd::-webkit-scrollbar-thumb:hover,
+.tui-body-container::-webkit-scrollbar-thumb:hover,
+.tech-table-wrap::-webkit-scrollbar-thumb:hover,
+.code-terminal::-webkit-scrollbar-thumb:hover,
+.kb-chassis::-webkit-scrollbar-thumb:hover,
+.ast-ribbon::-webkit-scrollbar-thumb:hover,
+#tui-modal-content pre::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan);
+}
+
+/* --------------------------------------------------------------------------
+   Breakpoint: <= 1024px (Tablets & Small Desktops)
+   -------------------------------------------------------------------------- */
 @media (max-width: 1024px) {
+  .nav-links {
+    display: none;
+  }
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    height: 32px;
+    font-size: 1.1rem;
+    padding: 0;
+  }
+  .mobile-nav-drawer.open {
+    display: flex;
+  }
+  .hide-md {
+    display: none !important;
+  }
+
+  .shell-wrap {
+    border-left: none;
+    border-right: none;
+  }
   .hero-grid,
   .kb-layout,
   .split-section {
@@ -1616,14 +1859,277 @@ code, pre, kbd, .mono {
     grid-column: span 12;
     border-right: none;
   }
-  .nav-links {
+  .hero-left,
+  .hero-right,
+  .section-banner,
+  .filter-workstation,
+  .keyboard-section,
+  .split-pane {
+    padding: 30px 24px;
+  }
+  .workstation-section {
+    padding: 24px 22px 30px;
+  }
+  .bento-cell {
+    padding: 26px 24px;
+  }
+  .wt-chrome-hint {
     display: none;
   }
 }
 
-/* --- Layout polish --- */
-.kb-chassis { justify-content: center; }
-.kb-inspector .section-coord { display: flex; }
-.kb-big-key { display: flex; width: fit-content; }
-.kb-inspector > div:last-child { flex-wrap: wrap; gap: 8px 14px; }
-.code-terminal { overflow: auto; }
+/* --------------------------------------------------------------------------
+   Breakpoint: <= 768px (Tablets portrait & Large Mobiles)
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .hide-sm {
+    display: none !important;
+  }
+  .telemetry-bar {
+    padding: 5px 16px;
+    scrollbar-width: none;
+  }
+  .telemetry-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .navbar-inner {
+    padding: 0 16px;
+  }
+  .hero-left,
+  .hero-right,
+  .section-banner,
+  .filter-workstation,
+  .keyboard-section,
+  .split-pane {
+    padding: 24px 18px;
+  }
+  .workstation-section {
+    padding: 20px 14px 26px;
+  }
+  .workstation-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .workstation-controls-right {
+    justify-content: flex-start;
+  }
+  .tui-quickbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .tui-inline-filter {
+    min-width: 0;
+    width: 100%;
+  }
+  .tui-modal-overlay {
+    inset: 8px;
+    padding: 12px 14px;
+  }
+  .tui-body-container {
+    min-height: 320px;
+    max-height: 380px;
+  }
+  .bento-cell {
+    padding: 22px 18px;
+  }
+  .arch-nodes {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kb-chassis {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px 12px;
+  }
+  .kb-row {
+    width: max-content;
+    margin: 0 auto 6px;
+    justify-content: flex-start;
+  }
+  .kb-row:last-child {
+    margin-bottom: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Breakpoint: <= 640px (Mobile Phones)
+   -------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .hero-left,
+  .hero-right,
+  .section-banner,
+  .filter-workstation,
+  .keyboard-section,
+  .split-pane {
+    padding: 20px 14px;
+  }
+  .workstation-section {
+    padding: 16px 10px 22px;
+  }
+  .bento-cell {
+    padding: 18px 14px;
+  }
+  .hero-headline {
+    font-size: clamp(1.72rem, 7.5vw, 2.3rem);
+    margin-bottom: 12px;
+  }
+  .hero-lead {
+    font-size: 0.88rem;
+    margin-bottom: 18px;
+  }
+  .hero-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .metric-cell:nth-child(2n) {
+    border-right: none;
+  }
+  .metric-cell:nth-child(1),
+  .metric-cell:nth-child(2) {
+    border-bottom: 1px solid var(--line-dim);
+  }
+  .binary-split {
+    grid-template-columns: 1fr;
+  }
+  .mode-btn {
+    padding: 5px 8px;
+    font-size: 0.69rem;
+    gap: 5px;
+  }
+  .mode-btn kbd {
+    font-size: 0.61rem;
+    padding: 1px 4px;
+  }
+  .tui-viewport {
+    font-size: 0.72rem;
+  }
+  .tui-grid-table {
+    font-size: 0.72rem;
+  }
+  .tui-grid-table th,
+  .tui-grid-table td {
+    padding: 5px 8px;
+  }
+  .tui-modal-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.72rem;
+  }
+  .diff-line {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    font-size: 0.7rem;
+  }
+  .query-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .query-input {
+    flex: 1 1 200px;
+    min-width: 0;
+    font-size: 0.82rem;
+  }
+  .query-presets {
+    padding: 8px 12px;
+  }
+  .ast-ribbon {
+    padding: 8px 12px;
+  }
+  .kb-key {
+    min-width: 32px;
+    height: 38px;
+    padding: 2px 5px;
+    font-size: 0.68rem;
+  }
+  .kb-key.w-wide {
+    min-width: 52px;
+  }
+  .kb-key.w-space {
+    min-width: 120px;
+  }
+  .kb-inspector {
+    padding: 18px 14px;
+  }
+  .cfg-grid {
+    grid-template-columns: 1fr;
+  }
+  .cfg-item input[type="number"],
+  .cfg-item select {
+    width: 120px;
+  }
+  .code-terminal {
+    padding: 12px;
+    font-size: 0.72rem;
+  }
+  .site-footer {
+    padding: 24px 14px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .footer-links {
+    flex-wrap: wrap;
+    gap: 12px 18px;
+  }
+  .keystroke-hud {
+    bottom: 12px;
+    right: 12px;
+    left: 12px;
+    text-align: center;
+    font-size: 0.7rem;
+    padding: 6px 10px;
+    max-width: calc(100vw - 24px);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Breakpoint: <= 480px (Extra Small Mobile Phones e.g. 360px - 414px)
+   -------------------------------------------------------------------------- */
+@media (max-width: 480px) {
+  .hide-xs {
+    display: none !important;
+  }
+  .telemetry-bar {
+    padding: 4px 10px;
+    font-size: 0.64rem;
+  }
+  .navbar-inner {
+    height: 52px;
+    padding: 0 10px;
+    gap: 6px;
+  }
+  .brand {
+    font-size: 0.94rem;
+    gap: 7px;
+  }
+  .brand-mark {
+    width: 24px;
+    height: 24px;
+    font-size: 0.75rem;
+  }
+  .brand-tag {
+    font-size: 0.6rem;
+    padding: 1px 5px;
+  }
+  .hud-btn {
+    height: 30px;
+    padding: 0 9px;
+    font-size: 0.68rem;
+  }
+  .hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .cta-btn {
+    justify-content: center;
+    width: 100%;
+    padding: 10px 14px;
+  }
+  .arch-nodes {
+    grid-template-columns: 1fr;
+  }
+}

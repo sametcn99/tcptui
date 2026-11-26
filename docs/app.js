@@ -654,29 +654,29 @@ const KEYDECK_INFO = {
   'u': { title: 'Toggle UDP Visibility (u)', desc: 'Shows or hides UDP endpoints (Shift+U toggles unconnected/listening endpoints).' },
   'i': { title: 'System Statistics Popup (i)', desc: 'Opens the system summary popup with protocol state counts and top processes ranked by socket count and transferred bytes.', mode: 'detail' },
   'o': { title: 'Multi-Key Sort Order Editor (o)', desc: 'Opens the interactive sort chain editor where you can reorder, toggle ascending/descending, or enable multi-column sort keys.' },
-  'p': { title: 'Pause / Resume Live Updates (p)', desc: 'Freezes incoming snapshots so the table, colors, and chart hold still for inspection while ETW timestamps continue buffering.', act: 'pause' },
+  'p': { title: 'Pause / Resume Live Updates (p)', desc: 'Freezes the table and chart while the collector and any enabled TCP trace continue in the background.', act: 'pause' },
   'A': { title: 'Alert & Coloring Rules Studio (Shift+A)', desc: 'Opens the Rules editor to configure alert expressions (with ⚠ indicator and bell) and Wireshark-style row coloring rules.', mode: 'rules' },
   's': { title: 'Cycle Sort Column (s / Shift+S)', desc: 'Cycles the primary sort column forward (`s`) or reverses the current sort order (`Shift+S`).' },
   'Ctrl+F': { title: 'Incremental Cell Search (Ctrl+F)', desc: 'Highlights matching text directly inside table cells and jumps between matches with `n` and `N`.' },
   'G': { title: 'Grouped Process Tree View (Shift+G)', desc: 'Aggregates endpoints into collapsible per-process tree nodes with total Tx/Rx byte summaries.', mode: 'grouped' },
   '?': { title: 'Two-Column Scrollable Help (? / H)', desc: 'Opens the balanced two-column keyboard and mouse shortcut reference.' },
   'j/k': { title: 'Vim-Style Row Navigation (j / k)', desc: 'Moves selection down (`j` / `Down`) or up (`k` / `Up`) across the endpoint table or active popup.' },
-  'K': { title: 'Terminate Process (Shift+K)', desc: 'Prompts for confirmation and terminates the owning process (or all marked processes) via Win32 TerminateProcess.' },
+  'K': { title: 'Terminate Process (Shift+K)', desc: 'Prompts for confirmation and terminates the selected or marked processes when the operating system permits it.' },
   'L': { title: 'Toggle Loopback Visibility (Shift+L)', desc: 'Quickly hides or reveals loopback (`127.0.0.1` / `::1`) endpoints.' },
-  'Enter': { title: 'Process & Authenticode Details (Enter)', desc: 'Opens the process inspection popup showing executable path, user account, WinVerifyTrust signature status, and 2-minute traffic sparkline.', mode: 'detail' },
-  'Ctrl+P': { title: 'Fuzzy Command Palette (Ctrl+P)', desc: 'Opens the interactive Command Palette with subsequence matching across all 22 actions.', mode: 'palette' },
+  'Enter': { title: 'Process Details (Enter)', desc: 'Shows the executable path, user account, traffic sparkline, and signature status on Windows and macOS when available.', mode: 'detail' },
+  'Ctrl+P': { title: 'Fuzzy Command Palette (Ctrl+P)', desc: 'Opens the Command Palette and searches the actions available on your platform.', mode: 'palette' },
   'x': { title: 'Clear Marks, Alerts & Filter (x)', desc: 'Resets row marks, dismisses pending alert banners, and clears any active filter in one keystroke.', preset: '' },
-  'c': { title: 'Close TCP Connection (c)', desc: 'Immediately tears down the selected (or all marked) ESTABLISHED IPv4 TCP connection(s) using Win32 SetTcpEntry(DELETE_TCB).', act: 'close' },
-  'V': { title: 'VirusTotal Reputation Lookup (Shift+V)', desc: 'Hashes the owning process executable (SHA-256) or queries the remote IP against the VirusTotal v3 API.', mode: 'vt' },
-  'B': { title: 'Live EStats Bandwidth Chart (Shift+B)', desc: 'Opens the rolling per-interval Tx/Rx throughput bar chart powered by Windows EStats counters.', mode: 'chart' },
+  'c': { title: 'Close TCP Connection (c)', desc: 'Prompts before closing established TCP connections. Windows supports IPv4 and Linux supports IPv4 and IPv6 with sufficient permissions. macOS offers process termination.', act: 'close' },
+  'V': { title: 'VirusTotal Reputation Lookup (Shift+V)', desc: 'Hashes the owning process executable and looks up the SHA-256 in VirusTotal when the optional feature is configured.', mode: 'vt' },
+  'B': { title: 'TCP Bandwidth Chart (Shift+B)', desc: 'Charts measured TCP bytes per refresh using Windows EStats, Linux TCP_INFO, or macOS nettop.', mode: 'chart' },
   'n': { title: 'Next / Previous Search Match (n / N)', desc: 'Jumps the cursor to the next (`n`) or previous (`Shift+N`) row matching the active Ctrl+F search.' },
-  'M': { title: 'In-App Settings Screen (Shift+M)', desc: 'Opens the interactive settings modal to edit refresh rate, theme, EStats, ETW, GeoIP path, and bell notifications.' },
+  'M': { title: 'In-App Settings Screen (Shift+M)', desc: 'Opens settings for the refresh rate, theme, platform traffic counters, GeoIP path, and bell notifications.' },
   '/': { title: 'Structured Filter Prompt (/)', desc: 'Focuses the filter bar with live match counts, inline syntax diagnostics, and Up/Down command history.' },
   'Space': { title: 'Mark / Unmark Row for Batch Actions (Space)', desc: 'Toggles the `*` mark on the selected row (or use Shift+Up/Down for range marking) for batch Close, Kill, or TSV Copy.' }
 };
 
 const CLI_SAMPLES = {
-  json: `PS> tcpvcon.exe -a -j -n --filter "proto=tcp and state=established and loopback=false"
+  json: `$ tcpvcon -a -j -n --filter "proto=tcp and state=established and loopback=false"
 [
   {
     "Process": "chrome.exe",
@@ -699,11 +699,11 @@ const CLI_SAMPLES = {
     "State": "ESTABLISHED"
   }
 ]`,
-  csv: `PS> tcpvcon.exe -a -c -n chrome
+  csv: `$ tcpvcon -a -c -n chrome
 Process,PID,Protocol,Local Address,Local Port,Remote Address,Remote Port,State
 chrome.exe,39496,TCP,192.168.1.111,54720,142.250.187.206,443,ESTABLISHED
 chrome.exe,39496,TCP,192.168.1.111,54788,104.18.32.47,443,ESTABLISHED`,
-  table: `PS> tcpvcon.exe -a -n
+  table: `$ tcpvcon -a -n
 Process            PID    Proto Local Address                  L-Port Remote Address                 R-Port State
 ------------------ ------ ----- ------------------------------ ------ ------------------------------ ------ -------------
 Code.exe           35668  TCP   127.0.0.1                      6907   0.0.0.0                        0      LISTEN
@@ -1155,7 +1155,9 @@ bold = true`;
       bento_title: 'Engineered for Sub-Millisecond Terminal Rendering.',
       bento_sub: 'Platform socket collectors feed a shared Ratatui interface and CLI. Polling, tracing, and reverse DNS run on background threads.',
       filter_title: 'Test the 17-Field Query Compiler Live.',
-      kb_title: 'Interactive Keyboard Deck'
+      kb_title: 'Interactive Keyboard Deck',
+      package_install: 'Installation guide',
+      package_version: 'Linux and macOS release downloads start with v1.4.0.'
     },
     tr: {
       nav_workstation: '01 // CANLI TUI İSTASYONU',
@@ -1170,7 +1172,9 @@ bold = true`;
       bento_title: 'Milisaniye Altı Terminal Çizimi İçin Tasarlandı.',
       bento_sub: 'Her işletim sisteminin soket toplayıcısı ortak Ratatui arayüzüne ve CLI’a veri sağlar. Örnekleme, olay takibi ve ters DNS arka planda çalışır.',
       filter_title: '17 Alanlı Sorgu Derleyicisini Canlı Test Edin.',
-      kb_title: 'Etkileşimli Fiziksel Klavye Konsolu'
+      kb_title: 'Etkileşimli Fiziksel Klavye Konsolu',
+      package_install: 'Kurulum kılavuzu',
+      package_version: 'Linux ve macOS indirmeleri v1.4.0 ile başlıyor.'
     }
   };
 

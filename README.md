@@ -4,6 +4,8 @@ A native Rust terminal monitor for TCP and UDP endpoints on Windows, Linux, and 
 
 Use `tcptui` to inspect connections in a live table or `tcpvcon` to filter and export them from scripts. Both show IPv4 and IPv6 endpoints and the PID and process name when the operating system makes that information available.
 
+Example session on Windows.
+
 ```
  tcptui  sort:Process ↑ resolve:off                                          1000ms
 ┌ 423 endpoint(s) ─────────────────────────────────────────────────────────────┐
@@ -137,7 +139,7 @@ cargo fmt --all --check
 
 ## Installation and distribution
 
-Find the assets and `sha256sums.txt` under [GitHub Releases](https://github.com/sametcn99/tcptui/releases). Each binary archive includes `tcptui` and `tcpvcon`. Choose the download for your OS and CPU architecture.
+Linux and macOS release downloads start with **v1.4.0**. Find archives, packages, and `sha256sums.txt` under [GitHub Releases](https://github.com/sametcn99/tcptui/releases). Each archive includes both binaries. Choose the download for your OS and CPU architecture.
 
 | Platform | Install |
 |---|---|

@@ -147,7 +147,8 @@
               <code id="pkg-cmd-display" aria-live="polite">scoop install https://github.com/sametcn99/tcptui/releases/latest/download/scoop-tcptui.json</code>
             </div>
           </div>
-          <p class="deck-note"><span id="pkg-note">Windows x64. </span><a href="https://github.com/sametcn99/tcptui/blob/main/README.md#installation-and-distribution">Package downloads and installation</a></p>
+          <p class="deck-note"><span id="pkg-note">Windows x64. </span><a href="https://github.com/sametcn99/tcptui/blob/main/README.md#installation-and-distribution" data-i18n="package_install">Installation guide</a></p>
+          <p class="deck-note" data-i18n="package_version">Linux and macOS release downloads start with v1.4.0.</p>
         </div>
 
         <!-- Dual Binary Suite -->
@@ -338,7 +339,7 @@
     </section>
 
     <!-- ======================================================================
-         02 // ASYMMETRIC BENTO ARCHITECTURE & WIN32 SCHEMATICS
+         02 // PLATFORM COLLECTION AND RENDERING
          ====================================================================== -->
     <section class="bento-section" id="architecture">
       <div class="section-banner">
@@ -352,7 +353,7 @@
       </div>
 
       <div class="bento-grid">
-        <!-- Cell 1 (7 Cols): Interactive Win32 -> Ratatui Pipeline Inspector -->
+        <!-- Cell 1 (7 Cols): Interactive Socket Collector and Ratatui Pipeline -->
         <div class="bento-cell col-7">
           <div class="cell-tag">INTERACTIVE SCHEMATIC // CLICK A STAGE TO INSPECT RUST MODULE</div>
           <h3>4-Stage Lock-Free Collector &amp; Render Pipeline</h3>
@@ -377,7 +378,7 @@
             <div class="arch-node" data-arch="ui">
               <div class="arch-node-step">STAGE 04</div>
               <div class="arch-node-title">src/ui/ + actions.rs</div>
-              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Ratatui &amp; SetTcpEntry</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Ratatui and platform actions</div>
             </div>
           </div>
 
@@ -407,7 +408,7 @@
         <!-- Cell 3 (4 Cols): Authenticode & SCM -->
         <div class="bento-cell col-4">
           <div class="cell-tag">SECURITY TELEMETRY // src/actions.rs</div>
-          <h3>WinVerifyTrust Authenticode &amp; SCM Unpacking</h3>
+          <h3>Process details and signatures</h3>
           <p>
             Windows verifies Authenticode signatures and shows Service Control Manager names. Linux shows systemd services when available. macOS verifies executable signatures through Apple Code Signing Services.
           </p>
@@ -609,10 +610,10 @@ Style  : fg=#ff2e55 bold=true bell=on</div>
       <div class="split-pane">
         <div class="section-coord">05A // AUTOMATION &amp; SCRIPTING COMPANION</div>
         <h3 style="font-family: var(--font-display); font-size: 1.6rem; color: var(--text-bright); margin-bottom: 10px;">
-          <code>tcpvcon.exe</code> — CLI Output Formats
+          <code>tcpvcon</code> — CLI Output Formats
         </h3>
         <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 18px;">
-          Ships alongside <code>tcptui.exe</code>. Supports positional process/PID filtering plus the full structured <code>--filter</code> expression engine in plain table, CSV, or JSON formats.
+          Ships alongside <code>tcptui</code>. Supports positional process/PID filtering plus the full structured <code>--filter</code> expression engine in plain table, CSV, or JSON formats.
         </p>
 
         <div class="mode-pills" style="margin-bottom: 12px;">

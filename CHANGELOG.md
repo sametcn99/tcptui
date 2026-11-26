@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.4.0] - Unreleased
+## [1.4.0] - 2026-11-26
 
 ### Added
 
@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Windows IPv4 control requests use the correct port byte order. ETW subscribes to the Kernel-Network provider and handles IPv6 connect and disconnect events.
 - VirusTotal uses the native TLS connector and retains its configuration across restarts.
 - Process termination checks the captured process identity. Unix terminal cleanup runs on errors, and the Linux clipboard retains selection ownership during the session.
+
+### Security
+
+- Updated `url` and `rustix` to their patched versions.
 
 ## [1.3.0] - 2026-10-13
 

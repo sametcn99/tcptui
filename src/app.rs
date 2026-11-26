@@ -3969,7 +3969,9 @@ mod phase_g_tests {
         app.selected = 0;
         app.open_context_menu();
         assert_eq!(app.mode, Mode::ContextMenu);
-        assert_eq!(app.ctx_menu.len(), 9);
+        let can_close = cfg!(any(windows, target_os = "linux"));
+        assert_eq!(app.ctx_menu.len(), 8 + usize::from(can_close));
+        assert_eq!(app.ctx_menu.contains(&ContextItem::Close), can_close);
 
         // Navigate to "Copy table" and run it.
         for item in app.ctx_menu.clone() {

@@ -2,11 +2,13 @@
 // tcptui — Interactive Browser TUI State Machine & Telemetry Engine
 // ============================================================================
 
-const PKG_COMMANDS = {
-  scoop: 'scoop install https://github.com/sametcn99/tcptui/releases/download/v1.3.0/scoop-tcptui.json',
-  cargo: 'cargo install --git https://github.com/sametcn99/tcptui.git --all-features',
-  pwsh: 'iwr https://github.com/sametcn99/tcptui/releases/download/v1.3.0/tcptui-v1.3.0-windows-x86_64.zip -OutFile tcptui.zip; Expand-Archive tcptui.zip',
-  source: 'git clone https://github.com/sametcn99/tcptui.git && cd tcptui && cargo build --release --all-features'
+const PACKAGES = {
+  scoop: ['scoop install https://github.com/sametcn99/tcptui/releases/latest/download/scoop-tcptui.json', 'Windows x64'],
+  apt: ['sudo apt install ./tcptui_*.deb', 'Download the .deb for your architecture first.'],
+  dnf: ['sudo dnf install ./tcptui-*.rpm', 'Download the .rpm for your architecture first.'],
+  arch: ['tar -xzf tcptui-bin-aur.tar.gz && makepkg -si', 'Download the Arch recipe and run this in a dedicated directory.'],
+  brew: ['brew install <tap>/tcptui', 'The release provides tcptui.rb for a trusted tap. An installable macOS archive is also available.'],
+  cargo: ['cargo install --locked --git https://github.com/sametcn99/tcptui.git', 'See the build requirements for your operating system.']
 };
 
 // Initial live socket dataset
@@ -625,8 +627,8 @@ function initOscilloscope() {
 // 3. Architecture Inspector & Tactile Keydeck Definitions
 // ============================================================================
 const ARCH_DETAILS = {
-  net: `<strong style="color: var(--cyan);">[STAGE 01 // src/net.rs · src/proc.rs · src/services.rs]</strong><br/>Calls <code>netstat2::get_sockets_info(AF_INET | AF_INET6, TCP | UDP)</code>, queries Win32 <code>GetPerTcpConnectionEStats</code> / <code>GetPerTcp6ConnectionEStats</code> for raw <code>DataBytesOut</code> and <code>DataBytesIn</code> counters, enriches PIDs via <code>sysinfo</code>, and maps Windows Service Control Manager (SCM) services with <code>EnumServicesStatusExW</code>.`,
-  etw: `<strong style="color: var(--cyan);">[STAGE 02 // src/etw.rs · src/dns.rs · src/geoip.rs]</strong><br/>Subscribes to the <code>Microsoft-Windows-Kernel-Network</code> ETW provider (<code>StartTraceW</code> / <code>ProcessTrace</code>) for real kernel connect/disconnect events. Reverse DNS runs on isolated non-blocking lookup threads (<code>getnameinfo</code>), and remote IPs are resolved against MaxMind <code>GeoLite2-Country.mmdb</code>.`,
+  net: `<strong style="color: var(--cyan);">[STAGE 01 // src/net.rs · src/proc.rs · src/services.rs]</strong><br/>Windows uses IP Helper and IPv4 EStats. Linux uses inet_diag with TCP_INFO and resolves owners through /proc. macOS uses libproc to inspect sockets and nettop to sample TCP byte counts.`,
+  etw: `<strong style="color: var(--cyan);">[STAGE 02 // src/etw.rs · src/dns.rs · src/geoip.rs]</strong><br/>Windows ETW and Linux eBPF can record transient TCP events. macOS reports changes observed in polling snapshots. Reverse DNS runs on isolated non-blocking lookup threads (<code>getnameinfo</code>), and remote IPs are resolved against MaxMind <code>GeoLite2-Country.mmdb</code>.`,
   model: `<strong style="color: var(--cyan);">[STAGE 03 // src/model.rs · src/filter.rs · src/app.rs]</strong><br/><code>merge_snapshots()</code> diffs the incoming socket table against the previous tick, tagging each 5-tuple as <code>New</code> (+), <code>Changed</code> (~), <code>Deleted</code> (-), or <code>Unchanged</code> while preserving <code>first_seen</code> timestamps. Then evaluates the 17-field recursive-descent filter AST, alert rules, and Wireshark coloring rules.`,
   ui: `<strong style="color: var(--cyan);">[STAGE 04 // src/events.rs · src/ui/table.rs · src/actions.rs]</strong><br/>Pure <code>event → state → render</code> architecture on Ratatui + Crossterm. Supports horizontal wheel scroll, header drag-resize, fuzzy command palette, headless <code>--dump-frame</code> rendering, <code>WinVerifyTrust</code> Authenticode checks, and <code>SetTcpEntry</code> connection termination.`
 };
@@ -836,19 +838,26 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPkg = 'scoop';
   const pkgDisplay = document.getElementById('pkg-cmd-display');
   const pkgTabs = document.querySelectorAll('.deck-tab');
+  const pkgNote = document.getElementById('pkg-note');
   const copyPkgBtn = document.getElementById('copy-pkg-btn');
 
   pkgTabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      pkgTabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
+      pkgTabs.forEach(item => {
+        const selected = item === tab;
+        item.classList.toggle('active', selected);
+        item.setAttribute('aria-pressed', String(selected));
+      });
       currentPkg = tab.dataset.pkg;
-      pkgDisplay.textContent = PKG_COMMANDS[currentPkg];
+      const [command, note] = PACKAGES[currentPkg];
+      pkgDisplay.textContent = command;
+      pkgNote.textContent = note + ' ';
+      copyPkgBtn.disabled = currentPkg === 'brew';
     });
   });
 
   copyPkgBtn?.addEventListener('click', () => {
-    navigator.clipboard.writeText(PKG_COMMANDS[currentPkg]);
+    navigator.clipboard.writeText(PACKAGES[currentPkg][0]);
     copyPkgBtn.textContent = 'COPIED ✓';
     setTimeout(() => { copyPkgBtn.textContent = 'COPY'; }, 1500);
   });
@@ -1142,9 +1151,9 @@ bold = true`;
       hero_coord: 'SYSINTERNALS TCPVIEW // TERMINAL RE-ENGINEERING',
       hero_h1_a: 'Total Socket Visibility.',
       hero_h1_b: 'Zero GUI Overhead.',
-      hero_lead: 'Native Rust terminal UI for Windows that enumerates every IPv4 & IPv6 TCP/UDP endpoint in real time. Equipped with extended TCP byte counters (EStats), kernel ETW connection tracing, a 17-field boolean query compiler, Wireshark-style row coloring, Authenticode verification, and instant SetTcpEntry socket termination.',
+      hero_lead: 'Inspect IPv4 and IPv6 TCP and UDP endpoints on Windows, Linux, and macOS. Filter live connections by process, address, or state, chart TCP traffic, and export results with the TUI or the tcpvcon command.',
       bento_title: 'Engineered for Sub-Millisecond Terminal Rendering.',
-      bento_sub: 'No Electron. No Tokio async bloat. Classic std::thread + mpsc channels bridge low-level Windows IP Helper & ETW kernel APIs to a deterministic Ratatui frame buffer.',
+      bento_sub: 'Platform socket collectors feed a shared Ratatui interface and CLI. Polling, tracing, and reverse DNS run on background threads.',
       filter_title: 'Test the 17-Field Query Compiler Live.',
       kb_title: 'Interactive Keyboard Deck'
     },
@@ -1157,9 +1166,9 @@ bold = true`;
       hero_coord: 'SYSINTERNALS TCPVIEW // TERMİNAL YENİDEN MÜHENDİSLİĞİ',
       hero_h1_a: 'Tam Soket Görünürlüğü.',
       hero_h1_b: 'Sıfır GUI Yükü.',
-      hero_lead: 'Windows üzerindeki tüm IPv4 ve IPv6 TCP/UDP uç noktalarını gerçek zamanlı izleyen yerel Rust terminal arayüzü. Genişletilmiş TCP bayt sayaçları (EStats), çekirdek düzeyi ETW bağlantı izleme, 17 alanlı boolean sorgu derleyicisi, Wireshark tarzı satır renklendirme, Authenticode imza doğrulaması ve SetTcpEntry ile anında soket sonlandırma.',
+      hero_lead: 'Windows, Linux ve macOS’ta IPv4 ve IPv6 TCP ve UDP uç noktalarını inceleyin. Bağlantıları sürece, adrese veya duruma göre filtreleyin, TCP trafiğini grafikle izleyin ve sonuçları TUI ya da tcpvcon ile dışa aktarın.',
       bento_title: 'Milisaniye Altı Terminal Çizimi İçin Tasarlandı.',
-      bento_sub: 'Electron yok. Gereksiz async çalışma zamanı yükü yok. Klasik std::thread + mpsc kanalları, düşük seviyeli Windows IP Helper ve ETW çekirdek API’lerini doğrudan Ratatui tamponuna bağlar.',
+      bento_sub: 'Her işletim sisteminin soket toplayıcısı ortak Ratatui arayüzüne ve CLI’a veri sağlar. Örnekleme, olay takibi ve ters DNS arka planda çalışır.',
       filter_title: '17 Alanlı Sorgu Derleyicisini Canlı Test Edin.',
       kb_title: 'Etkileşimli Fiziksel Klavye Konsolu'
     }

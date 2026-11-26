@@ -501,10 +501,15 @@ code, pre, kbd, .mono {
   white-space: nowrap;
 }
 
-.deck-cmd .ps-prompt {
+.deck-note {
+  margin: 0;
+  padding: 0 14px 10px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.deck-note a {
   color: var(--cyan);
-  margin-right: 8px;
-  user-select: none;
 }
 
 .binary-split {

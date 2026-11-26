@@ -7,7 +7,7 @@
 use crate::config::ViewConfig;
 
 pub const USAGE: &str = "\
-tcptui - terminal UI clone of Sysinternals TCPView for Windows
+tcptui - terminal UI for TCP and UDP endpoints
 
 USAGE:
     tcptui [OPTIONS]
@@ -16,8 +16,6 @@ OPTIONS:
         --interval <MS>     Snapshot refresh interval in milliseconds
                             (250..=60000, default 1000)
         --no-resolve        Start with hostname resolution disabled
-        --etw               Experimental: real connection events via ETW
-                            (requires an elevated terminal)
         --dump-frame <FILE>
                             Render one frame with live data to FILE as text
                             and exit (no terminal needed; screenshots)
@@ -43,11 +41,28 @@ KEYS (inside the TUI):
     F5 refresh    F6 watch process    r  resolve addresses
 ";
 
+pub fn usage() -> String {
+    let tracing = match crate::trace::SOURCE {
+        Some("ETW") => "        --trace, --etw      Trace TCP events with ETW (administrator)\n",
+        Some(_) => {
+            "        --trace             Trace TCP events with eBPF (kernel and permissions required)\n"
+        }
+        None => "",
+    };
+    let usage = USAGE.replace("OPTIONS:\n", &format!("OPTIONS:\n{tracing}"));
+    if crate::actions::CLOSE_SUPPORTED {
+        usage
+    } else {
+        usage.replace("    c  close connection", "   ")
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CliOpts {
     pub interval_ms: Option<u64>,
     pub no_resolve: bool,
     pub etw: bool,
+    pub trace: bool,
     pub dump_frame: Option<String>,
     pub frame_size: Option<(u16, u16)>,
     pub filter: Option<String>,
@@ -68,10 +83,7 @@ pub enum ParseOutcome {
 /// Parse `std::env::args()`. Unknown flags are reported as errors; a
 /// standalone `-` or non-flag argument is ignored for future positional use.
 pub fn parse(args: &[String]) -> Result<(CliOpts, ParseOutcome), String> {
-    let mut opts = CliOpts {
-        etw: false,
-        ..CliOpts::default()
-    };
+    let mut opts = CliOpts::default();
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -86,6 +98,7 @@ pub fn parse(args: &[String]) -> Result<(CliOpts, ParseOutcome), String> {
             "-V" | "--version" => opts.version = true,
             "--no-resolve" => opts.no_resolve = true,
             "--etw" => opts.etw = true,
+            "--trace" => opts.trace = true,
             "--dump-frame" => {
                 let v = value_for("--dump-frame")?;
                 opts.dump_frame = Some(v);

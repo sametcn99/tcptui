@@ -16,8 +16,9 @@ use crate::model::{
     ConnectionRow, ProcessInfo, Protocol, RowChange, RowId, Snapshot, Stats, format_bytes,
     merge_snapshots,
 };
-use crate::net::EStatsReader;
+use crate::net::TrafficReader;
 use crate::proc::ProcTable;
+use crate::trace;
 
 // ---------------------------------------------------------------------------
 // Columns
@@ -526,6 +527,7 @@ pub enum PaletteCmd {
     ToggleLoopback,
     NextTheme,
     Whois,
+    Close,
     Quit,
 }
 
@@ -553,11 +555,12 @@ impl PaletteCmd {
             PaletteCmd::ToggleLoopback => "toggle loopback visibility",
             PaletteCmd::NextTheme => "next theme",
             PaletteCmd::Whois => "whois remote address",
+            PaletteCmd::Close => "close connection",
             PaletteCmd::Quit => "quit",
         }
     }
 
-    pub const ALL: [PaletteCmd; 22] = [
+    pub const ALL: [PaletteCmd; 23] = [
         PaletteCmd::Pause,
         PaletteCmd::Help,
         PaletteCmd::Chart,
@@ -579,8 +582,13 @@ impl PaletteCmd {
         PaletteCmd::ToggleLoopback,
         PaletteCmd::NextTheme,
         PaletteCmd::Whois,
+        PaletteCmd::Close,
         PaletteCmd::Quit,
     ];
+
+    fn available(self) -> bool {
+        self != Self::Close || crate::actions::CLOSE_SUPPORTED
+    }
 
     /// Run the command against the app (must be in Normal mode).
     pub fn execute(self, app: &mut App) {
@@ -638,6 +646,7 @@ impl PaletteCmd {
             }
             PaletteCmd::NextTheme => app.settings_adjust(true),
             PaletteCmd::Whois => app.request_whois(),
+            PaletteCmd::Close => app.begin_confirm_close(),
             PaletteCmd::Quit => app.should_quit = true,
         }
     }
@@ -648,11 +657,14 @@ impl PaletteCmd {
 pub fn palette_matches(query: &str) -> Vec<PaletteCmd> {
     let q: Vec<char> = query.to_lowercase().chars().collect();
     if q.is_empty() {
-        return PaletteCmd::ALL.to_vec();
+        return PaletteCmd::ALL
+            .into_iter()
+            .filter(|cmd| cmd.available())
+            .collect();
     }
     PaletteCmd::ALL
-        .iter()
-        .copied()
+        .into_iter()
+        .filter(|cmd| cmd.available())
         .filter(|cmd| {
             let label: Vec<char> = cmd.label().to_lowercase().chars().collect();
             let mut qi = q.iter();
@@ -831,7 +843,7 @@ pub fn bw_push(window: &mut std::collections::VecDeque<(u64, u64)>, tx: u64, rx:
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     Close(Vec<ConnectionRow>),
-    Kill(Vec<(u32, String)>),
+    Kill(Vec<ProcessInfo>),
 }
 
 impl ConfirmAction {
@@ -854,7 +866,7 @@ impl ConfirmAction {
             ConfirmAction::Kill(procs) => {
                 let names: Vec<String> = procs
                     .iter()
-                    .map(|(pid, name)| format!("{name} (PID {pid})"))
+                    .map(|p| format!("{} (PID {})", p.name, p.pid))
                     .collect();
                 format!(
                     "End {} process(es)?\n{}\n\nAll their endpoints will be closed.",
@@ -912,10 +924,11 @@ pub enum CollectorCmd {
 #[derive(Debug)]
 pub enum AppMsg {
     Snapshot(Snapshot),
+    SnapshotError(String),
 }
 
 /// Spawn the background collector. It owns the process table and the
-/// EStats reader, refreshing on the configured cadence or on demand.
+/// platform traffic reader, refreshing on the configured cadence or on demand.
 pub fn spawn_collector(
     cmd_rx: Receiver<CollectorCmd>,
     tx: Sender<AppMsg>,
@@ -925,7 +938,7 @@ pub fn spawn_collector(
     std::thread::spawn(move || {
         let mut interval = initial_interval;
         let mut sys = ProcTable::new();
-        let mut estats = EStatsReader::new(estats_enabled);
+        let mut traffic = TrafficReader::new(estats_enabled);
         loop {
             match cmd_rx.recv_timeout(interval) {
                 Ok(CollectorCmd::RefreshNow) => {}
@@ -933,23 +946,28 @@ pub fn spawn_collector(
                     interval = d;
                     continue;
                 }
-                Ok(CollectorCmd::SetEstats(b)) => estats.set_enabled(b),
+                Ok(CollectorCmd::SetEstats(b)) => traffic.set_enabled(b),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
 
-            let snap = build_snapshot(&mut sys, &mut estats);
-            if tx.send(AppMsg::Snapshot(snap)).is_err() {
+            let message = match build_snapshot(&mut sys, &mut traffic) {
+                Ok(snapshot) => AppMsg::Snapshot(snapshot),
+                Err(error) => AppMsg::SnapshotError(format!("{error:#}")),
+            };
+            if tx.send(message).is_err() {
                 break; // UI is gone
             }
         }
     });
 }
 
-/// One full snapshot: sockets + process/service enrichment + EStats. Shared
-/// by the collector loop and the `--dump-frame` renderer.
-pub fn build_snapshot(sys: &mut ProcTable, estats: &mut EStatsReader) -> Snapshot {
-    let mut rows = crate::net::collect_sockets().unwrap_or_default();
+/// One full snapshot with sockets, optional counters and process metadata.
+pub fn build_snapshot(
+    sys: &mut ProcTable,
+    traffic: &mut TrafficReader,
+) -> anyhow::Result<Snapshot> {
+    let mut rows = traffic.collect()?;
     sys.refresh();
     let pids: Vec<u32> = rows
         .iter()
@@ -958,29 +976,22 @@ pub fn build_snapshot(sys: &mut ProcTable, estats: &mut EStatsReader) -> Snapsho
         .into_iter()
         .collect();
     let processes = sys.snapshot_for(&pids);
-    let services = crate::services::map_pid_to_services();
+    let services = crate::services::for_processes(&pids);
 
     for row in &mut rows {
         row.process_name = processes.get(&row.pid).map(|p| p.name.clone());
-        row.service_name = services.get(&row.pid).and_then(|list| {
-            list.first().map(|(_, display)| {
-                if display.is_empty() {
-                    String::new()
-                } else {
-                    display.clone()
-                }
-            })
-        });
+        row.service_name = services
+            .get(&row.pid)
+            .and_then(|list| list.first())
+            .map(|(name, display)| if display.is_empty() { name } else { display }.clone());
     }
 
-    estats.poll(&mut rows);
-
-    Snapshot {
+    Ok(Snapshot {
         taken_at: Local::now(),
         rows,
         processes,
         services,
-    }
+    })
 }
 
 /// Render exactly one frame with live data and write it as plain text —
@@ -992,17 +1003,15 @@ pub fn dump_frame(
     height: u16,
     config: Config,
 ) -> Result<(), String> {
-    let mut app = App::new(config, None);
+    let mut app = App::with_collector(config, None, false);
     let mut sys = ProcTable::new();
-    let mut estats = EStatsReader::new(app.estats_enabled);
-    let snap = build_snapshot(&mut sys, &mut estats);
+    let mut traffic = TrafficReader::new(app.estats_enabled && !cfg!(target_os = "macos"));
+    let snap = build_snapshot(&mut sys, &mut traffic).map_err(|error| format!("{error:#}"))?;
     app.apply_snapshot(snap);
 
     let backend = ratatui::backend::TestBackend::new(width, height);
-    let mut terminal = ratatui::Terminal::new(backend).map_err(|e| e.to_string())?;
-    terminal
-        .draw(|f| crate::ui::draw(f, &mut app))
-        .map_err(|e| e.to_string())?;
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
 
     let buf = terminal.backend().buffer();
     let mut out = String::new();
@@ -1022,6 +1031,34 @@ pub fn dump_frame(
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum TraceKey {
+    Cookie(u64),
+    Endpoints(u32, std::net::SocketAddr, std::net::SocketAddr),
+}
+
+impl TraceKey {
+    fn from_row(row: &ConnectionRow) -> Option<Self> {
+        let remote = row.id.remote?;
+        Some(match row.id.socket_cookie {
+            Some(cookie) => Self::Cookie(cookie),
+            None => Self::Endpoints(row.pid, row.id.local, remote),
+        })
+    }
+
+    fn from_event(event: &trace::Event) -> Self {
+        match event.cookie {
+            Some(cookie) => Self::Cookie(cookie),
+            None => Self::Endpoints(event.pid.unwrap_or_default(), event.local, event.remote),
+        }
+    }
+}
+
+struct TracedConnection {
+    opened_at: DateTime<Local>,
+    observed: bool,
+}
 
 pub struct App {
     pub mode: Mode,
@@ -1119,12 +1156,11 @@ pub struct App {
     pub profile_import_mode: bool,
     pub settings_cursor: usize,
 
-    // Experimental ETW mode (Phase D)
-    /// Keep-alive for the ETW session; dropping it stops the session.
-    pub etw_session: Option<crate::etw::EtwSession>,
-    pub etw_rx: Option<std::sync::mpsc::Receiver<crate::etw::EtwEvent>>,
-    /// Connect timestamps seen via ETW, used to correct `first_seen`.
-    pub etw_connects: HashMap<RowId, DateTime<Local>>,
+    pub trace_session: Option<trace::Session>,
+    trace_rx: Option<Receiver<trace::Message>>,
+    trace_connects: HashMap<TraceKey, TracedConnection>,
+    etw_enabled: bool,
+    pub snapshot_error: Option<String>,
 
     // Authenticode cache (Phase D)
     pub signed_cache: HashMap<String, Option<bool>>,
@@ -1178,9 +1214,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
+    pub fn new(config: Config, trace_rx: Option<Receiver<trace::Message>>) -> App {
+        Self::with_collector(config, trace_rx, true)
+    }
+
+    fn with_collector(
         config: Config,
-        etw_rx: Option<std::sync::mpsc::Receiver<crate::etw::EtwEvent>>,
+        trace_rx: Option<Receiver<trace::Message>>,
+        start: bool,
     ) -> App {
         let (collector_tx, collector_rx_cmd) = std::sync::mpsc::channel();
         let (msg_tx, collector_rx) = std::sync::mpsc::channel();
@@ -1189,7 +1230,9 @@ impl App {
         let dns_cache: SharedDnsCache = Arc::new(Mutex::new(DnsCache::new()));
 
         let interval = Duration::from_millis(config.view.refresh_interval_ms.clamp(250, 60000));
-        spawn_collector(collector_rx_cmd, msg_tx, interval, config.estats.enabled);
+        if start {
+            spawn_collector(collector_rx_cmd, msg_tx, interval, config.estats.enabled);
+        }
 
         let theme_name = config.view.theme.clone();
 
@@ -1327,9 +1370,11 @@ impl App {
             profile_input: None,
             profile_import_mode: false,
             settings_cursor: 0,
-            etw_session: None,
-            etw_rx,
-            etw_connects: HashMap::new(),
+            trace_session: None,
+            trace_rx,
+            trace_connects: HashMap::new(),
+            etw_enabled: config.etw.enabled,
+            snapshot_error: None,
             signed_cache: HashMap::new(),
             vt_state: None,
             vt_rx: None,
@@ -1364,7 +1409,9 @@ impl App {
             table_area: ratatui::layout::Rect::default(),
             last_click: None,
         };
-        app.request_refresh();
+        if start {
+            app.request_refresh();
+        }
         app
     }
 
@@ -1406,7 +1453,11 @@ impl App {
     pub fn poll_channels(&mut self) {
         while let Ok(msg) = self.collector_rx.try_recv() {
             match msg {
-                AppMsg::Snapshot(snap) => self.apply_snapshot(snap),
+                AppMsg::Snapshot(snap) => {
+                    self.snapshot_error = None;
+                    self.apply_snapshot(snap);
+                }
+                AppMsg::SnapshotError(error) => self.snapshot_error = Some(error),
             }
         }
         while let Ok(result) = self.whois_rx.try_recv() {
@@ -1418,14 +1469,24 @@ impl App {
                 }
             }
         }
-        let mut etw_events = Vec::new();
-        if let Some(rx) = &self.etw_rx {
-            while let Ok(event) = rx.try_recv() {
-                etw_events.push(event);
+        for _ in 0..1024 {
+            let Some(rx) = &self.trace_rx else { break };
+            match rx.try_recv() {
+                Ok(trace::Message::Event(event)) => self.handle_trace_event(event),
+                Ok(trace::Message::Lost(count)) => {
+                    self.trace_connects.clear();
+                    self.log_event(format!("TCP trace dropped {count} events"));
+                    self.push_status(format!("TCP trace dropped {count} events"));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.trace_rx = None;
+                    self.trace_session = None;
+                    self.trace_connects.clear();
+                    self.push_status("TCP trace stopped; using snapshot events");
+                    break;
+                }
             }
-        }
-        for event in etw_events {
-            self.handle_etw_event(event);
         }
         let vt_results: Vec<Result<String, String>> = self
             .vt_rx
@@ -1449,45 +1510,48 @@ impl App {
         }
     }
 
-    /// Apply one ETW event: remember connect timestamps, log connections
-    /// that closed before any snapshot could see them.
-    pub(crate) fn handle_etw_event(&mut self, event: crate::etw::EtwEvent) {
-        use crate::etw::EtwEvent;
-        match event {
-            EtwEvent::Connect {
-                pid, local, remote, ..
-            } => {
-                let id = RowId {
-                    protocol: Protocol::Tcp,
-                    local,
-                    remote: Some(remote),
-                    pid,
-                };
-                self.etw_connects.insert(id, Local::now());
+    fn handle_trace_event(&mut self, event: trace::Event) {
+        let key = TraceKey::from_event(&event);
+        if event.connected {
+            if self.trace_connects.len() >= 65536 {
+                self.trace_connects.clear();
             }
-            EtwEvent::Disconnect {
-                pid, local, remote, ..
-            } => {
-                let id = RowId {
-                    protocol: Protocol::Tcp,
-                    local,
-                    remote: Some(remote),
-                    pid,
-                };
-                if let Some(opened) = self.etw_connects.remove(&id) {
-                    // Rows already visible are closed by the snapshot diff;
-                    // anything else lived entirely between two snapshots.
-                    let known = self.rows.iter().any(|r| r.id == id);
-                    if !known {
-                        let lived = Local::now()
-                            .signed_duration_since(opened)
-                            .num_milliseconds();
-                        self.log_event(format!(
-                            "OPEN+CLOSE (transient, {lived} ms) tcp {local} -> {remote} pid {pid}"
-                        ));
+            let mut observed = false;
+            for row in &mut self.rows {
+                if row.protocol == Protocol::Tcp
+                    && row.change != RowChange::Deleted
+                    && TraceKey::from_row(row) == Some(key)
+                {
+                    if !self.paused {
+                        row.first_seen = Some(event.at);
                     }
+                    observed = true;
                 }
             }
+            self.trace_connects.insert(
+                key,
+                TracedConnection {
+                    opened_at: event.at,
+                    observed,
+                },
+            );
+        } else if let Some(connection) = self.trace_connects.remove(&key)
+            && !connection.observed
+        {
+            let local = event.local;
+            let remote = event.remote;
+            let pid = event
+                .pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "unknown".into());
+            let lived = event
+                .at
+                .signed_duration_since(connection.opened_at)
+                .num_milliseconds()
+                .max(0);
+            self.log_event(format!(
+                "OPEN+CLOSE (transient, {lived} ms) tcp {local} -> {remote} pid {pid}"
+            ));
         }
     }
 
@@ -1535,10 +1599,14 @@ impl App {
         }
 
         let mut rows = merge_snapshots(&self.rows, snap.rows);
-        // ETW knows the real connect time even when the snapshot is late.
-        for row in rows.iter_mut() {
-            if let Some(opened) = self.etw_connects.get(&row.id).copied() {
-                row.first_seen = Some(opened);
+        for row in &mut rows {
+            if row.protocol == Protocol::Tcp
+                && row.change != RowChange::Deleted
+                && let Some(key) = TraceKey::from_row(row)
+                && let Some(connection) = self.trace_connects.get_mut(&key)
+            {
+                row.first_seen = Some(connection.opened_at);
+                connection.observed = true;
             }
         }
         self.rows = rows;
@@ -1595,7 +1663,7 @@ impl App {
         }
     }
 
-    /// Update the bandwidth rolling windows from cumulative EStats counters.
+    /// Update the bandwidth rolling windows from cumulative socket counters.
     fn update_bandwidth(&mut self) {
         let current: HashMap<RowId, (u64, u64)> = self
             .rows
@@ -1610,6 +1678,11 @@ impl App {
             // First snapshot after unpausing: refresh the baseline only.
             self.bw_skip_next = false;
             self.bw_prev = current;
+            return;
+        }
+
+        if current.is_empty() {
+            self.bw_prev.clear();
             return;
         }
 
@@ -2184,10 +2257,14 @@ impl App {
     // -- Actions ---------------------------------------------------------------
 
     pub fn begin_confirm_close(&mut self) {
+        if !crate::actions::CLOSE_SUPPORTED {
+            self.push_status("Closing individual connections is unavailable on this platform");
+            return;
+        }
         let targets: Vec<ConnectionRow> = self
             .target_rows()
             .into_iter()
-            .filter(|r| r.is_established() && r.remote_addr.is_some())
+            .filter(crate::actions::can_close)
             .collect();
         if targets.is_empty() {
             self.push_status("No closable ESTABLISHED connection selected");
@@ -2227,32 +2304,24 @@ impl App {
     }
 
     pub fn begin_confirm_kill(&mut self) {
-        if let Some((pid, name)) = self.selected_group() {
-            self.confirm = Some(ConfirmAction::Kill(vec![(pid, name)]));
-            self.mode = Mode::Confirm;
-            return;
-        }
-        let mut pids: Vec<u32> = self.target_rows().iter().map(|r| r.pid).collect();
-        pids.sort();
+        let mut pids = match self.selected_group() {
+            Some((pid, _)) => vec![pid],
+            None => self.target_rows().iter().map(|r| r.pid).collect(),
+        };
+        pids.sort_unstable();
         pids.dedup();
-        if pids.is_empty() {
-            self.push_status("Nothing selected");
+        let processes: Vec<ProcessInfo> = pids
+            .into_iter()
+            .filter(|&pid| pid != 0)
+            .filter_map(|pid| self.processes.get(&pid))
+            .filter(|process| process.start_time != 0)
+            .cloned()
+            .collect();
+        if processes.is_empty() {
+            self.push_status("Selected processes could not be identified");
             return;
         }
-        let procs: Vec<(u32, String)> = pids
-            .iter()
-            .map(|pid| {
-                (
-                    *pid,
-                    self.target_rows()
-                        .iter()
-                        .find(|r| r.pid == *pid)
-                        .map(|r| r.process_display())
-                        .unwrap_or_else(|| "<unknown>".into()),
-                )
-            })
-            .collect();
-        self.confirm = Some(ConfirmAction::Kill(procs));
+        self.confirm = Some(ConfirmAction::Kill(processes));
         self.mode = Mode::Confirm;
     }
 
@@ -2291,8 +2360,10 @@ impl App {
                 let mut sys = ProcTable::new();
                 let mut killed = 0;
                 let mut failed: Vec<String> = Vec::new();
-                for (pid, name) in &procs {
-                    if sys.kill(*pid) {
+                for process in &procs {
+                    let pid = process.pid;
+                    let name = &process.name;
+                    if sys.kill(process) {
                         killed += 1;
                         self.log_event(format!("USER   ended process {name} (PID {pid})"));
                     } else {
@@ -2679,7 +2750,12 @@ impl App {
         lines.push(format!("PID:     {pid}"));
         lines.push(format!(
             "User:    {}",
-            crate::actions::process_user(pid).unwrap_or_else(|| "<unavailable>".into())
+            if cfg!(windows) {
+                crate::actions::process_user(pid)
+            } else {
+                proc.and_then(|p| p.user.clone())
+            }
+            .unwrap_or_else(|| "<unavailable>".into())
         ));
         if let Some(p) = proc {
             lines.push(format!(
@@ -2716,8 +2792,10 @@ impl App {
                 lines.push(format!("  ... and {} more", svcs.len() - 10));
             }
         }
-        // Authenticode status (cached; verification touches the file).
-        if let Some(exe) = proc.and_then(|p| p.exe.as_deref()) {
+        // Code signature status (cached; verification touches the file).
+        if cfg!(any(windows, target_os = "macos"))
+            && let Some(exe) = proc.and_then(|p| p.exe.as_deref())
+        {
             let verdict = match self.signed_cache.get(exe) {
                 Some(v) => *v,
                 None => {
@@ -3005,7 +3083,10 @@ impl App {
         } else {
             Vec::new()
         };
-        self.ctx_menu = items;
+        self.ctx_menu = items
+            .into_iter()
+            .filter(|item| *item != ContextItem::Close || crate::actions::CLOSE_SUPPORTED)
+            .collect();
         self.ctx_cursor = 0;
         self.mode = Mode::ContextMenu;
     }
@@ -3159,6 +3240,8 @@ impl App {
             })
             .collect();
         cfg.estats.enabled = self.estats_enabled;
+        cfg.etw.enabled = self.etw_enabled;
+        cfg.virustotal.api_key.clone_from(&self.vt_api_key);
         cfg.geoip.enabled = self.geoip_enabled;
         cfg.geoip.path = self.geoip_path.clone();
         cfg.notifications.bell = self.bell_enabled;
@@ -3654,61 +3737,74 @@ mod phase_c_tests {
 
 #[cfg(test)]
 mod phase_d_tests {
-    use super::tests::{synthetic_snapshot_like, v4};
+    use super::tests::synthetic_snapshot_like;
     use super::*;
-    use crate::etw::EtwEvent;
-    use std::net::SocketAddr;
-
-    fn connect_event() -> EtwEvent {
-        EtwEvent::Connect {
-            v6: false,
-            pid: 42,
-            local: SocketAddr::new(v4(127, 0, 0, 1), 5001),
-            remote: SocketAddr::new(v4(93, 184, 216, 34), 443),
+    fn connect_event(row: &ConnectionRow) -> trace::Event {
+        trace::Event {
+            connected: true,
+            local: row.id.local,
+            remote: row.id.remote.unwrap(),
+            pid: Some(row.pid),
+            cookie: row.id.socket_cookie,
+            at: Local::now() - chrono::Duration::seconds(5),
         }
     }
 
     #[test]
-    fn etw_timestamps_override_first_seen() {
+    fn trace_timestamps_override_first_seen() {
         let mut app = App::new(crate::config::Config::default(), None);
-        // A connect arrives before the row shows up in any snapshot.
-        app.handle_etw_event(connect_event());
-
-        let before = Local::now() - chrono::Duration::seconds(5);
-        let mut snap = synthetic_snapshot_like();
-        if let Some(row) = snap.rows.iter_mut().find(|r| r.local_port == 5001) {
-            // Simulate the ETW connect having happened 5 s ago.
-            let id = row.id.clone();
-            app.etw_connects.insert(id, before);
-        }
+        let snap = synthetic_snapshot_like();
+        let row = snap.rows.iter().find(|r| r.local_port == 5001).unwrap();
+        app.handle_trace_event(connect_event(row));
         app.apply_snapshot(snap);
         let row = app.rows.iter().find(|r| r.local_port == 5001).unwrap();
-        assert!(row.first_seen.is_some());
         assert!(crate::model::age_seconds(row.first_seen) >= 5);
     }
 
     #[test]
-    fn transient_etw_connections_are_logged() {
+    fn transient_connections_are_logged_without_inventing_a_pid() {
         let mut app = App::new(crate::config::Config::default(), None);
-        app.handle_etw_event(connect_event());
-        // Disconnect without any snapshot in between: transient entry.
-        let EtwEvent::Connect {
-            pid, local, remote, ..
-        } = connect_event()
-        else {
-            unreachable!()
-        };
-        app.handle_etw_event(EtwEvent::Disconnect {
-            v6: false,
-            pid,
-            local,
-            remote,
+        let snap = synthetic_snapshot_like();
+        let row = snap.rows.iter().find(|r| r.local_port == 5001).unwrap();
+        app.handle_trace_event(trace::Event {
+            pid: None,
+            cookie: Some(1),
+            ..connect_event(row)
         });
-        assert!(
-            app.event_log
-                .iter()
-                .any(|e| e.message.contains("transient"))
-        );
+        app.handle_trace_event(trace::Event {
+            connected: false,
+            pid: None,
+            cookie: Some(1),
+            at: Local::now(),
+            ..connect_event(row)
+        });
+        assert!(app.event_log.iter().any(|event| {
+            event.message.contains("transient") && event.message.contains("pid unknown")
+        }));
+    }
+
+    #[test]
+    fn refresh_failure_keeps_the_last_successful_snapshot() {
+        let mut app = App::with_collector(Config::default(), None, false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.collector_rx = rx;
+        tx.send(AppMsg::Snapshot(synthetic_snapshot_like()))
+            .unwrap();
+        app.poll_channels();
+        let original_rows = app.rows.len();
+
+        tx.send(AppMsg::SnapshotError("collector unavailable".into()))
+            .unwrap();
+        app.poll_channels();
+        assert_eq!(app.rows.len(), original_rows);
+        assert_eq!(app.snapshot_count, 1);
+        assert_eq!(app.snapshot_error.as_deref(), Some("collector unavailable"));
+
+        tx.send(AppMsg::Snapshot(synthetic_snapshot_like()))
+            .unwrap();
+        app.poll_channels();
+        assert_eq!(app.snapshot_count, 2);
+        assert!(app.snapshot_error.is_none());
     }
 
     #[test]
@@ -3732,6 +3828,7 @@ mod phase_d_tests {
         assert_eq!(app.stats.total, 2);
     }
 
+    #[cfg(windows)]
     #[test]
     fn signature_verification_runs_on_real_binary() {
         // Tolerant: value depends on the environment, but it must not panic
@@ -3798,13 +3895,26 @@ mod phase_f_tests {
         app.activate();
         assert!(!app.expanded.contains(&pid));
 
-        // K offers to kill the grouped process.
+        // K offers to kill the grouped process when its identity is known.
+        app.processes.insert(
+            pid,
+            ProcessInfo {
+                pid,
+                name: name.clone(),
+                start_time: 42,
+                exe: None,
+                cmd: None,
+                user: None,
+                cpu: 0.0,
+                mem: 0,
+            },
+        );
         app.begin_confirm_kill();
         match &app.confirm {
             Some(ConfirmAction::Kill(procs)) => {
                 assert_eq!(procs.len(), 1);
-                assert_eq!(procs[0].0, pid);
-                assert_eq!(procs[0].1, name);
+                assert_eq!(procs[0].pid, pid);
+                assert_eq!(procs[0].name, name);
             }
             other => panic!("expected kill confirmation, got {other:?}"),
         }

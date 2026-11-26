@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - Unreleased
+
+### Added
+
+- Windows, Linux, and macOS support for both binaries, with native IPv4 and IPv6 socket enumeration and platform configuration paths.
+- Linux TCP byte counters, systemd services, exact-socket IPv4 and IPv6 connection closing, and optional eBPF TCP tracing.
+- macOS socket and process inspection through libproc, TCP byte counters from nettop, and Apple code signature verification.
+- Native CI for five OS and architecture combinations, release tarballs, DEB and RPM packages, a Homebrew formula, and an Arch package recipe.
+
+### Fixed
+
+- Snapshot failures preserve the live table and report the failure. CLI and frame-dump failures return a nonzero exit code.
+- Windows IPv4 control requests use the correct port byte order. ETW subscribes to the Kernel-Network provider and handles IPv6 connect and disconnect events.
+- VirusTotal uses the native TLS connector and retains its configuration across restarts.
+- Process termination checks the captured process identity. Unix terminal cleanup runs on errors, and the Linux clipboard retains selection ownership during the session.
+
 ## [1.3.0] - 2026-10-13
 
 ### Added

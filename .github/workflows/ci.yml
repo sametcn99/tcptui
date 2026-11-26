@@ -5,122 +5,219 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build-test:
-    runs-on: windows-latest
+    name: ${{ matrix.platform }} / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, platform: windows, arch: x86_64, suffix: ".exe" }
+          - { runner: ubuntu-22.04, platform: linux, arch: x86_64, suffix: "" }
+          - { runner: ubuntu-22.04-arm, platform: linux, arch: aarch64, suffix: "" }
+          - { runner: macos-15-intel, platform: macos, arch: x86_64, suffix: "" }
+          - { runner: macos-15, platform: macos, arch: aarch64, suffix: "" }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+      EXE_SUFFIX: ${{ matrix.suffix }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev libbpf-dev libssl-dev pkg-config
+
+      - name: Configure macOS SDK
+        if: matrix.platform == 'macos'
+        run: |
+          sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot \"$sdk\"" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
 
       - name: Format
         run: cargo fmt --all --check
-
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Tests
-        run: cargo test --all
-
+        run: cargo test --locked
       - name: Tests (all features)
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
+      - name: Tests (no default features)
+        run: cargo test --locked --no-default-features
+
+      - name: Linux kernel socket actions and tracing
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          native_test="$(
+            cargo test --locked --all-features --no-run --test native_sockets --message-format=json |
+            python -c 'import json, sys; print(*(msg["executable"] for line in sys.stdin if (msg := json.loads(line)).get("executable") and msg["target"]["name"] == "native_sockets"))'
+          )"
+          sudo unshare --net sh -ec 'ip link set lo up; exec "$1" --ignored destroy_requires_the_original_socket_cookie' sh "$native_test"
+          sudo unshare --net sh -ec 'ip link set lo up; exec "$1" --ignored ebpf_reports_short_lived_tcp_connections' sh "$native_test"
+
+      - name: Windows ETW, EStats and SetTcpEntry
+        if: matrix.platform == 'windows'
+        run: cargo test --locked --all-features --test native_sockets windows_transport_capabilities -- --ignored
 
       - name: Build release binaries
-        run: cargo build --release --all-features
+        run: cargo build --locked --release --all-features
 
-      - name: Smoke test tcpvcon
+      - name: Smoke test release binaries
+        shell: bash
         run: |
-          ./target/release/tcpvcon.exe --version
-          ./target/release/tcpvcon.exe -a -n
-          ./target/release/tcpvcon.exe -a -c -n
-          ./target/release/tcpvcon.exe -a -j -n
-          ./target/release/tcptui.exe --version
-          ./target/release/tcptui.exe --help
+          bin=target/release
+          "./$bin/tcpvcon$EXE_SUFFIX" --version
+          "./$bin/tcpvcon$EXE_SUFFIX" -a -n
+          "./$bin/tcpvcon$EXE_SUFFIX" -a -c -n
+          "./$bin/tcpvcon$EXE_SUFFIX" -a -j -n | python -m json.tool > /dev/null
+          "./$bin/tcptui$EXE_SUFFIX" --version
+          "./$bin/tcptui$EXE_SUFFIX" --help
+          "./$bin/tcptui$EXE_SUFFIX" --no-resolve --dump-frame "$bin/frame-dark.txt" --frame-size 120x30
+          "./$bin/tcptui$EXE_SUFFIX" --no-resolve --dump-frame "$bin/frame-wide.txt" --frame-size 180x40
+          grep -q 'endpoint(s)' "$bin/frame-dark.txt"
 
-      - name: Security audit
-        uses: taiki-e/install-action@cargo-audit
-      - run: cargo audit
+      - name: Exercise Unix terminal
+        if: matrix.platform != 'windows'
+        run: python tests/terminal_smoke.py "$PWD/target/release/tcptui"
 
-      - name: Upload binaries
+      - name: Archive
+        shell: bash
+        run: |
+          tag_args=()
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then tag_args=(--tag "$GITHUB_REF_NAME"); fi
+          python packaging/release.py "${tag_args[@]}" archive "$PLATFORM" "$ARCH" target/release dist
+
+      - name: Package and install DEB and RPM
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          python packaging/release.py deb "$ARCH" target/release dist
+          for image in ubuntu:22.04 debian:12; do
+            docker run --rm -v "$PWD/dist:/assets:ro" "$image" sh -ec '
+              apt-get update -qq
+              apt-get install -y /assets/*.deb
+              tcptui --version
+              tcpvcon -a -j -n
+            '
+          done
+          docker build -t "tcptui-rpmbuild:$ARCH" - <<'DOCKERFILE'
+          FROM fedora:44
+          RUN dnf -y install python3 rpm-build && dnf clean all
+          DOCKERFILE
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src \
+            "tcptui-rpmbuild:$ARCH" python3 packaging/release.py rpm "$ARCH" target/release dist
+          docker run --rm -v "$PWD/dist:/assets:ro" fedora:44 sh -ec '
+            dnf -y install /assets/*.rpm
+            tcptui --version
+            tcpvcon -a -j -n
+          '
+
+      - name: Build and install Arch recipe
+        if: matrix.platform == 'linux' && matrix.arch == 'x86_64'
+        shell: bash
+        run: |
+          recipe="$(mktemp -d)"
+          chmod 755 "$recipe"
+          python packaging/release.py arch-recipe dist "$recipe"
+          docker run --rm -v "$PWD/dist:/assets:ro" -v "$recipe:/recipe:ro" archlinux:base-devel bash -euc '
+            useradd --create-home build
+            cd /home/build
+            cp /recipe/{PKGBUILD,.SRCINFO} /assets/*-linux-x86_64.tar.gz .
+            chown build:build ./* .SRCINFO
+            runuser -u build -- makepkg --printsrcinfo | diff -u .SRCINFO -
+            runuser -u build -- makepkg --noconfirm
+            pacman -U --noconfirm *.pkg.tar.*
+            tcptui --version
+            tcpvcon -a -j -n
+          '
+
+      - name: Install native macOS archive via Homebrew
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          tap="$(mktemp -d)"
+          python packaging/release.py formula --local-arch "$ARCH" dist "$tap/Formula"
+          git -C "$tap" init -q
+          git -C "$tap" add Formula
+          git -C "$tap" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'Add test formula'
+          HOMEBREW_NO_AUTO_UPDATE=1 brew tap tcptui-ci/smoke "$tap"
+          if brew help trust >/dev/null 2>&1; then brew trust --formula tcptui-ci/smoke/tcptui; fi
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install tcptui-ci/smoke/tcptui
+          brew test tcptui-ci/smoke/tcptui
+          tcpvcon -a -j -n
+
+      - name: Upload verified release assets
         uses: actions/upload-artifact@v4
         with:
-          name: tcptui-windows
-          path: |
-            target/release/tcptui.exe
-            target/release/tcpvcon.exe
+          name: tcptui-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
+    needs: [build-test, audit]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: actions/setup-python@v5
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
-
-      - name: Build release binaries
-        run: cargo build --release --all-features
-
-      - name: Generate frame dumps
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tcptui-*
+          path: dist
+          merge-multiple: true
+      - name: Render manifests and validate the release set
         run: |
-          ./target/release/tcptui.exe --dump-frame frame-dark.txt --frame-size 120x30
-          ./target/release/tcptui.exe --dump-frame frame-wide.txt --frame-size 180x40
-
-      - name: Package
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $zip = "tcptui-$tag-windows-x86_64.zip"
-          Compress-Archive -Path target/release/tcptui.exe, target/release/tcpvcon.exe, README.md, LICENSE, frame-dark.txt, frame-wide.txt -DestinationPath $zip
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
-          "$hash  $zip" | Out-File -Encoding ascii sha256sums.txt
-          Write-Output "ZIP=$zip" >> $env:GITHUB_ENV
-
-      - name: Render Scoop manifest for this release
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}" -replace '^v',''
-          $hash = (Get-FileHash "tcptui-$tag-windows-x86_64.zip" -Algorithm SHA256).Hash.ToLower()
-          $manifest = Get-Content packaging/scoop/tcptui.json -Raw
-          $manifest = $manifest -replace '"version": "[^"]+"', "`"version`": `"$tag`""
-          $manifest = $manifest -replace 'download/v[^/]+/tcptui-v[^-]+-', "download/v$tag/tcptui-v$tag-"
-          $manifest = $manifest -replace '"hash": "[^"]*"', "`"hash`": `"$hash`""
-          Set-Content -Encoding ascii scoop-tcptui.json $manifest
-
-      - name: Create GitHub release
+          python packaging/release.py --tag "$GITHUB_REF_NAME" finalize dist
+          cd dist
+          sha256sum --check sha256sums.txt
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            tcptui-*-windows-x86_64.zip
-            sha256sums.txt
-            scoop-tcptui.json
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/sha256sums.txt
+            dist/scoop-tcptui.json
+            dist/tcptui.rb
+          fail_on_unmatched_files: true
           generate_release_notes: true

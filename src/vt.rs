@@ -32,7 +32,12 @@ pub fn sha256_file(path: &std::path::Path) -> Result<String> {
 /// Query the VirusTotal v3 API for a file hash and render a compact report.
 pub fn lookup(api_key: &str, hash: &str) -> Result<String> {
     let url = format!("https://www.virustotal.com/api/v3/files/{hash}");
-    let response = ureq::get(&url)
+    let credentials = ureq::native_tls::TlsConnector::new().context("initializing HTTPS client")?;
+    let agent = ureq::builder()
+        .tls_connector(std::sync::Arc::new(credentials))
+        .build();
+    let response = agent
+        .get(&url)
         .set("x-apikey", api_key)
         .timeout(std::time::Duration::from_secs(20))
         .call()

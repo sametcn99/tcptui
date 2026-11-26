@@ -1,101 +1,66 @@
-//! PID -> Windows service mapping via the Service Control Manager.
-//!
-//! TCPView shows the service display name next to processes that host a
-//! service; this reproduces that via `EnumServicesStatusExW` with
-//! `SC_ENUM_PROCESS_INFO`.
+//! Service names associated with monitored processes.
 
 use std::collections::HashMap;
 
-use windows::Win32::System::Services::{
-    CloseServiceHandle, ENUM_SERVICE_STATUS_PROCESSW, EnumServicesStatusExW, OpenSCManagerW,
-    SC_ENUM_PROCESS_INFO, SC_MANAGER_ENUMERATE_SERVICE, SERVICE_DRIVER, SERVICE_STATE_ALL,
-    SERVICE_WIN32,
-};
-use windows::core::PCWSTR;
+#[cfg(windows)]
+mod windows;
 
-/// Map every running service's PID to its (service name, display name) pairs.
-pub fn map_pid_to_services() -> HashMap<u32, Vec<(String, String)>> {
-    let mut result: HashMap<u32, Vec<(String, String)>> = HashMap::new();
+#[cfg(windows)]
+pub use windows::map_pid_to_services;
 
-    unsafe {
-        let scm = match OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE) {
-            Ok(h) => h,
-            Err(_) => return result, // e.g. service database locked; non-fatal
-        };
+pub fn for_processes(_pids: &[u32]) -> HashMap<u32, Vec<(String, String)>> {
+    #[cfg(windows)]
+    return map_pid_to_services();
 
-        let mut buffer: Vec<u8> = vec![0; 128 * 1024];
-        let mut needed: u32 = 0;
-        let mut count: u32 = 0;
-        let service_type = SERVICE_WIN32 | SERVICE_DRIVER;
-        let ok = EnumServicesStatusExW(
-            scm,
-            SC_ENUM_PROCESS_INFO,
-            service_type,
-            SERVICE_STATE_ALL,
-            Some(&mut buffer),
-            &mut needed,
-            &mut count,
-            None,
-            PCWSTR::null(),
-        );
-        if ok.is_err() {
-            // Grow to the required size and retry once.
-            buffer = vec![0; needed as usize];
-            let _ = EnumServicesStatusExW(
-                scm,
-                SC_ENUM_PROCESS_INFO,
-                service_type,
-                SERVICE_STATE_ALL,
-                Some(&mut buffer),
-                &mut needed,
-                &mut count,
-                None,
-                PCWSTR::null(),
-            );
-        }
+    #[cfg(target_os = "linux")]
+    return linux::for_processes(_pids);
 
-        let entries = std::slice::from_raw_parts(
-            buffer.as_ptr() as *const ENUM_SERVICE_STATUS_PROCESSW,
-            count as usize,
-        );
-        for e in entries {
-            let pid = e.ServiceStatusProcess.dwProcessId;
-            if pid == 0 {
-                continue; // stopped service or driver without a process
-            }
-            let name = if e.lpServiceName.is_null() {
-                String::new()
-            } else {
-                PCWSTR::from_raw(e.lpServiceName.0)
-                    .to_string()
-                    .unwrap_or_default()
-            };
-            let display = if e.lpDisplayName.is_null() {
-                String::new()
-            } else {
-                PCWSTR::from_raw(e.lpDisplayName.0)
-                    .to_string()
-                    .unwrap_or_default()
-            };
-            result.entry(pid).or_default().push((name, display));
-        }
-
-        let _ = CloseServiceHandle(scm);
-    }
-
-    result
+    #[cfg(target_os = "macos")]
+    HashMap::new()
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn service_map_returns_without_panicking() {
-        // On CI/developer machines the SCM is available; the call must at
-        // worst return an empty map, never panic.
-        let map = super::map_pid_to_services();
-        for (pid, svcs) in &map {
-            assert!(*pid > 0);
-            assert!(!svcs.is_empty());
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::collections::HashMap;
+    use std::ffi::CStr;
+    use std::sync::OnceLock;
+
+    type GetUnit = unsafe extern "C" fn(libc::pid_t, *mut *mut libc::c_char) -> libc::c_int;
+
+    pub(super) fn for_processes(pids: &[u32]) -> HashMap<u32, Vec<(String, String)>> {
+        static LIBRARY: OnceLock<Option<libloading::Library>> = OnceLock::new();
+        // SAFETY: the OS-provided systemd library stays loaded for the life of the process.
+        let library =
+            LIBRARY.get_or_init(|| unsafe { libloading::Library::new("libsystemd.so.0").ok() });
+        let Some(library) = library else {
+            return HashMap::new();
+        };
+        // SAFETY: these symbols have the sd-login ABI and return caller-owned C strings.
+        let user_unit = unsafe { library.get::<GetUnit>(b"sd_pid_get_user_unit\0") }.ok();
+        let system_unit = unsafe { library.get::<GetUnit>(b"sd_pid_get_unit\0") }.ok();
+
+        pids.iter()
+            .filter(|&&pid| pid > 0 && pid <= libc::pid_t::MAX as u32)
+            .filter_map(|&pid| {
+                let name = user_unit
+                    .as_ref()
+                    .and_then(|f| lookup(**f, pid))
+                    .or_else(|| system_unit.as_ref().and_then(|f| lookup(**f, pid)))?;
+                Some((pid, vec![(name.clone(), name)]))
+            })
+            .collect()
+    }
+
+    fn lookup(get_unit: GetUnit, pid: u32) -> Option<String> {
+        let mut name = std::ptr::null_mut();
+        // SAFETY: out parameter is valid; on success the returned string is freed with libc.
+        unsafe {
+            if get_unit(pid as libc::pid_t, &raw mut name) < 0 || name.is_null() {
+                return None;
+            }
+            let unit = CStr::from_ptr(name).to_string_lossy().into_owned();
+            libc::free(name.cast());
+            unit.ends_with(".service").then_some(unit)
         }
     }
 }

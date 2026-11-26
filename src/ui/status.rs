@@ -15,8 +15,11 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
     if !app.alert_pending.is_empty() {
         left_text.push_str(&format!("⚠{} ", app.alert_pending.len()));
     }
-    if app.etw_session.is_some() {
-        left_text.push_str("ETW ");
+    if app.trace_session.is_some()
+        && let Some(source) = crate::trace::SOURCE
+    {
+        left_text.push_str(source);
+        left_text.push(' ');
     }
     if app.paused {
         left_text.push_str("PAUSED ");
@@ -52,7 +55,11 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
     let right = format!(
         "{}ms{}",
         app.refresh_interval.as_millis(),
-        if app.admin { " ADMIN" } else { "" }
+        match (app.admin, cfg!(windows)) {
+            (true, true) => " ADMIN",
+            (true, false) => " ROOT",
+            (false, _) => "",
+        }
     );
 
     let used = left_text.chars().count() as u16;
@@ -90,24 +97,38 @@ pub fn draw_title_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    let top = match app.current_status() {
+    let status = app.current_status().map(str::to_owned).or_else(|| {
+        app.snapshot_error
+            .as_ref()
+            .map(|error| format!("Refresh failed: {error}"))
+    });
+    let top = match status {
         Some(msg) => Line::from(Span::styled(
             format!(" {msg}"),
             Style::default().fg(app.theme.changed),
         )),
-        None => Line::from(Span::styled(
-            " ?:help  /:filter  1-8:presets  o:sort  B:chart  A:rules  c:close  K:kill  e:export  q:quit",
-            Style::default().fg(app.theme.dim),
-        )),
+        None => {
+            let close = if crate::actions::CLOSE_SUPPORTED {
+                "  c:close"
+            } else {
+                ""
+            };
+            Line::from(Span::styled(
+                format!(
+                    " ?:help  /:filter  1-8:presets  o:sort  B:chart  A:rules{close}  K:kill  e:export  q:quit"
+                ),
+                Style::default().fg(app.theme.dim),
+            ))
+        }
     };
 
-    let estats = if app.estats_enabled {
-        ""
+    let traffic = if app.estats_enabled {
+        crate::net::TRAFFIC_SOURCE
     } else {
-        " · estats:off"
+        "off"
     };
     let bottom_text = format!(
-        " total {} · tcp {} (est {} lsn {} tw {} cw {}) · udp {} · shown {}{}",
+        " total {} · tcp {} (est {} lsn {} tw {} cw {}) · udp {} · shown {} · traffic:{traffic}",
         app.rows.len(),
         app.stats.tcp,
         app.stats.established,
@@ -116,7 +137,6 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         app.stats.close_wait,
         app.stats.udp,
         app.visible.len(),
-        estats,
     );
     let bottom = Line::from(Span::styled(
         bottom_text,

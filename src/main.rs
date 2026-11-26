@@ -1,6 +1,6 @@
 //! tcptui binary: argument handling, terminal lifecycle and the main loop.
 
-use std::io;
+use std::io::{self, IsTerminal};
 
 use anyhow::Result;
 use crossterm::event::{
@@ -8,7 +8,7 @@ use crossterm::event::{
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
-use ratatui::{DefaultTerminal, init, restore};
+use ratatui::{DefaultTerminal, try_init, try_restore};
 
 use tcptui::app::{App, FilterKind};
 use tcptui::args::{self, ParseOutcome};
@@ -19,9 +19,10 @@ fn main() {
         // Keep the console window open after a fatal error so that
         // double-clicked launches can actually show the message.
         eprintln!("tcptui: {e}");
-        eprintln!();
-        eprintln!("Press Enter to close...");
-        let _ = io::stdin().read_line(&mut String::new());
+        if cfg!(windows) && io::stdin().is_terminal() {
+            eprintln!("Press Enter to close...");
+            let _ = io::stdin().read_line(&mut String::new());
+        }
         std::process::exit(1);
     }
 }
@@ -30,12 +31,12 @@ fn run() -> Result<()> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let (opts, outcome) = args::parse(&raw).unwrap_or_else(|e| {
         eprintln!("tcptui: {e}");
-        eprintln!("{}", args::USAGE);
+        eprintln!("{}", args::usage());
         std::process::exit(2);
     });
     match outcome {
         ParseOutcome::Help => {
-            println!("{}", args::USAGE);
+            println!("{}", args::usage());
             return Ok(());
         }
         ParseOutcome::Version => {
@@ -43,6 +44,11 @@ fn run() -> Result<()> {
             return Ok(());
         }
         ParseOutcome::Run => {}
+    }
+
+    if (opts.etw && !cfg!(windows)) || (opts.trace && tcptui::trace::SOURCE.is_none()) {
+        eprintln!("tcptui: TCP tracing is unavailable with this flag on this build (see --help)");
+        std::process::exit(2);
     }
 
     // The startup filter must parse cleanly before we enter the TUI.
@@ -56,7 +62,7 @@ fn run() -> Result<()> {
     let mut config = Config::load();
     args::apply_overrides(&opts, &mut config.view);
 
-    tcptui::net::ensure_wsa()?;
+    tcptui::net::initialize()?;
 
     // One-shot text render of a live frame (--dump-frame): no TUI.
     if let Some(file) = &opts.dump_frame {
@@ -73,25 +79,26 @@ fn run() -> Result<()> {
         }
     }
 
-    // Experimental ETW mode: opt-in, elevated terminals only, falls back
-    // to plain polling on any failure.
-    let mut etw_error: Option<String> = None;
-    let mut etw_rx = None;
-    let mut etw_session = None;
-    if opts.etw || config.etw.enabled {
-        match tcptui::etw::EtwSession::start() {
-            Ok((session, rx)) => {
-                etw_rx = Some(rx);
-                etw_session = Some(session);
-            }
-            Err(e) => etw_error = Some(e),
+    anyhow::ensure!(
+        io::stdin().is_terminal() && io::stdout().is_terminal(),
+        "the interactive UI needs a terminal; use tcpvcon or --dump-frame for redirected output"
+    );
+    let tracing = opts.trace || opts.etw || (cfg!(windows) && config.etw.enabled);
+    let (session, receiver, trace_error) = if tracing {
+        match tcptui::trace::start() {
+            Ok((session, receiver)) => (Some(session), Some(receiver), None),
+            Err(error) => (None, None, Some(error)),
         }
-    }
+    } else {
+        (None, None, None)
+    };
 
-    let mut app = App::new(config, etw_rx);
-    app.etw_session = etw_session;
-    if let Some(e) = etw_error {
-        app.push_status(format!("ETW disabled: {e}"));
+    let mut app = App::new(config, receiver);
+    app.trace_session = session;
+    if let Some(error) = trace_error {
+        let message = format!("TCP trace unavailable; using snapshots: {error}");
+        app.log_event(message.clone());
+        app.push_status(message);
     }
     if let Some(text) = opts.filter.clone() {
         app.filter_input.value = text;
@@ -102,32 +109,42 @@ fn run() -> Result<()> {
     // legacy Windows console rejects them outright.
     let enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
 
-    let mut terminal = init();
-    if enhanced {
+    let mut terminal = match try_init() {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let _ = try_restore();
+            return Err(error.into());
+        }
+    };
+    let setup = if enhanced {
         execute!(
             io::stdout(),
             EnableMouseCapture,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
+        )
     } else {
-        execute!(io::stdout(), EnableMouseCapture)?;
-    }
+        execute!(io::stdout(), EnableMouseCapture)
+    };
 
-    let result = run_tui(&mut terminal, &mut app);
-
-    if enhanced {
+    let result = setup
+        .map_err(anyhow::Error::from)
+        .and_then(|()| run_tui(&mut terminal, &mut app));
+    let cleanup = if enhanced {
         execute!(
             io::stdout(),
             PopKeyboardEnhancementFlags,
             DisableMouseCapture
-        )?;
+        )
     } else {
-        execute!(io::stdout(), DisableMouseCapture)?;
+        execute!(io::stdout(), DisableMouseCapture)
+    };
+    let restored = try_restore();
+    if result.is_ok() {
+        app.save_config();
     }
-    restore();
-    app.save_config();
-
     result
+        .and(cleanup.map_err(Into::into))
+        .and(restored.map_err(Into::into))
 }
 
 fn run_tui(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {

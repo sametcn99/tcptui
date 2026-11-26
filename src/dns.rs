@@ -1,14 +1,9 @@
-//! Reverse DNS resolution via `GetNameInfoW` with a TTL cache and a
+//! Reverse DNS resolution via the system resolver with a TTL cache and a
 //! background worker thread so the UI never blocks on lookups.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
-
-use windows::Win32::Networking::WinSock::{
-    AF_INET, AF_INET6, GetNameInfoW, IN_ADDR, IN_ADDR_0, NI_MAXHOST, NI_NAMEREQD, SOCKADDR,
-    SOCKADDR_IN, SOCKADDR_IN6, socklen_t,
-};
 
 /// Result state for one IP in the cache.
 #[derive(Clone, Debug, PartialEq)]
@@ -78,66 +73,11 @@ impl DnsCache {
 
 pub type SharedDnsCache = Arc<Mutex<DnsCache>>;
 
-/// Blocking reverse lookup of a single address. `NI_NAMEREQD` makes numeric
-/// results a failure, matching TCPView's resolve toggle behavior.
+/// Blocking reverse lookup. A failed lookup leaves the numeric IP in the UI.
 pub fn reverse_lookup(ip: IpAddr) -> Option<String> {
-    // A port is required by getnameinfo but irrelevant for host lookups.
-    let mut node = [0u16; NI_MAXHOST as usize + 1];
-
-    let (ptr, len): (*const SOCKADDR, u32) = match ip {
-        IpAddr::V4(v4) => {
-            let sa = SOCKADDR_IN {
-                sin_family: AF_INET,
-                sin_port: 0,
-                sin_addr: IN_ADDR {
-                    S_un: IN_ADDR_0 {
-                        S_addr: u32::from_ne_bytes(v4.octets()),
-                    },
-                },
-                sin_zero: [0; 8],
-            };
-            (
-                &sa as *const SOCKADDR_IN as *const SOCKADDR,
-                std::mem::size_of::<SOCKADDR_IN>() as u32,
-            )
-        }
-        IpAddr::V6(v6) => {
-            // Anonymous (scope id) and flow info are left zeroed.
-            let mut sa = SOCKADDR_IN6 {
-                sin6_family: AF_INET6,
-                sin6_port: 0,
-                sin6_flowinfo: 0,
-                sin6_addr: Default::default(),
-                Anonymous: Default::default(),
-            };
-            sa.sin6_addr.u.Byte = v6.octets();
-            (
-                &sa as *const SOCKADDR_IN6 as *const SOCKADDR,
-                std::mem::size_of::<SOCKADDR_IN6>() as u32,
-            )
-        }
-    };
-
-    let rc = unsafe {
-        GetNameInfoW(
-            ptr,
-            socklen_t(len as i32),
-            Some(&mut node),
-            None,
-            NI_NAMEREQD as i32,
-        )
-    };
-    if rc != 0 {
-        return None;
-    }
-    let end = node.iter().position(|&c| c == 0).unwrap_or(node.len());
-    let name = String::from_utf16(&node[..end]).unwrap_or_default();
-    let trimmed = name.trim_end_matches('.').to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+    let name = dns_lookup::lookup_addr(&ip).ok()?;
+    let trimmed = name.trim_end_matches('.');
+    (!trimmed.is_empty() && trimmed.parse::<IpAddr>().is_err()).then(|| trimmed.to_string())
 }
 
 #[cfg(test)]

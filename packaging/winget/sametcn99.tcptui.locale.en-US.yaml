@@ -5,7 +5,7 @@ PackageVersion: __VERSION__
 PackageName: tcptui
 Publisher: sametcn99
 License: MIT
-ShortDescription: Terminal UI clone of Sysinternals TCPView for Windows
+ShortDescription: Terminal TCP and UDP endpoint monitor
 PackageUrl: https://github.com/sametcn99/tcptui
 Moniker: tcptui
 ManifestType: defaultLocale

@@ -110,7 +110,7 @@ fn main() {
 }
 
 fn run(cli: &Cli) -> Result<()> {
-    tcptui::net::ensure_wsa()?;
+    tcptui::net::initialize()?;
 
     let mut rows = tcptui::net::collect_sockets()?;
 

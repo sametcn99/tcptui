@@ -30,6 +30,7 @@ pub struct RowId {
     pub local: SocketAddr,
     pub remote: Option<SocketAddr>,
     pub pid: u32,
+    pub socket_cookie: Option<u64>,
 }
 
 /// How a row changed relative to the previous snapshot.
@@ -57,10 +58,12 @@ pub struct ConnectionRow {
     pub state: Option<netstat2::TcpState>,
     pub process_name: Option<String>,
     pub service_name: Option<String>,
-    /// Cumulative EStats byte counters, when collection is enabled.
+    /// Cumulative byte counters, when supported and collection is enabled.
     pub tx_bytes: Option<u64>,
     pub rx_bytes: Option<u64>,
     pub change: RowChange,
+    #[cfg(target_os = "linux")]
+    pub(crate) socket_interface: u32,
     /// When this endpoint was first observed by tcptui (set on the first
     /// snapshot that reports it). `None` only until the first merge.
     pub first_seen: Option<chrono::DateTime<chrono::Local>>,
@@ -87,6 +90,7 @@ impl ConnectionRow {
                 local,
                 remote,
                 pid,
+                socket_cookie: None,
             },
             protocol,
             pid,
@@ -100,6 +104,8 @@ impl ConnectionRow {
             tx_bytes: None,
             rx_bytes: None,
             change: RowChange::New,
+            #[cfg(target_os = "linux")]
+            socket_interface: 0,
             first_seen: None,
         }
     }
@@ -158,6 +164,8 @@ pub struct ProcessInfo {
     pub name: String,
     pub exe: Option<String>,
     pub cmd: Option<String>,
+    pub user: Option<String>,
+    pub start_time: u64,
     pub cpu: f32,
     pub mem: u64,
 }

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>tcptui // Windows Kernel Socket Telemetry &amp; Terminal UI (Rust + Ratatui)</title>
-  <meta name="description" content="A native Rust + Ratatui terminal UI clone of Sysinternals TCPView for Windows. Real-time IPv4/IPv6 TCP & UDP inspection, EStats bandwidth charts, ETW kernel tracing, structured filter AST, and connection control." />
+  <title>tcptui | Terminal socket monitor for Windows, Linux, and macOS</title>
+  <meta name="description" content="Inspect IPv4 and IPv6 TCP and UDP sockets on Windows, Linux, and macOS. Live terminal view, filters, TCP counters, and scriptable CSV and JSON output." />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -20,13 +20,11 @@
   <div class="telemetry-bar">
     <div class="telemetry-group">
       <span class="telemetry-item"><span class="pulse-dot"></span> ENGINE: ONLINE</span>
-      <span class="telemetry-item hide-sm">TARGET: x86_64-pc-windows-msvc</span>
+      <span class="telemetry-item hide-sm">WINDOWS · LINUX · MACOS</span>
       <span class="telemetry-item hide-md">EDITION: RUST 2024 // RATATUI 0.30.2</span>
-      <span class="telemetry-item hide-md">WIN32_API: IpHlpApi · WinTrust · AdvApi32 · ETW</span>
     </div>
     <div class="telemetry-group">
       <span class="telemetry-item" id="top-live-throughput">TX: 412.4 KiB/s · RX: 2.38 MiB/s</span>
-      <span class="telemetry-item hide-xs" style="color: var(--cyan);">RELEASE: v1.3.0</span>
     </div>
   </div>
 
@@ -36,7 +34,6 @@
       <a href="#" class="brand">
         <span class="brand-mark">T</span>
         <span>tcptui</span>
-        <span class="brand-tag">v1.3.0</span>
       </a>
 
       <ul class="nav-links">
@@ -65,7 +62,7 @@
       <a href="#filter-engine" data-i18n="nav_filter">03 // FILTER AST</a>
       <a href="#keyboard-deck" data-i18n="nav_kb">04 // KEYDECK</a>
       <a href="#cli-config" data-i18n="nav_cli">05 // CLI &amp; CONFIG</a>
-      <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="mobile-nav-cta">↓ DOWNLOAD v1.3.0 BINARIES</a>
+      <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="mobile-nav-cta">↓ DOWNLOAD BINARIES</a>
     </nav>
   </header>
 
@@ -87,12 +84,12 @@
           <span class="accent-stroke" data-i18n="hero_h1_b">Zero GUI Overhead.</span>
         </h1>
         <p class="hero-lead" data-i18n="hero_lead">
-          Native Rust terminal UI for Windows that enumerates every IPv4 &amp; IPv6 TCP/UDP endpoint in real time. Equipped with extended TCP byte counters (EStats), kernel ETW connection tracing, a 17-field boolean query compiler, Wireshark-style row coloring, Authenticode verification, and instant <code>SetTcpEntry</code> socket termination.
+          Inspect IPv4 and IPv6 TCP and UDP endpoints on Windows, Linux, and macOS. Filter live connections by process, address, or state, chart TCP traffic, and export results with the TUI or the tcpvcon command.
         </p>
 
         <div class="hero-actions">
           <a href="https://github.com/sametcn99/tcptui/releases/latest" target="_blank" rel="noopener" class="cta-btn cta-btn-cyan">
-            <span>↓ DOWNLOAD v1.3.0 (WIN-X64)</span>
+            <span>↓ DOWNLOAD BINARIES</span>
           </a>
           <a href="#workstation" class="cta-btn">
             <span>▶ INTERACTIVE TUI BELOW</span>
@@ -126,7 +123,7 @@
         <!-- Live 60fps EStats Throughput Oscilloscope -->
         <div class="oscilloscope-card">
           <div class="osc-header">
-            <span>ESTATS_WAVEFORM // GetPerTcpConnectionEStats</span>
+            <span>TCP TRAFFIC DEMO</span>
             <span class="osc-legend"><span style="color: var(--cyan);">■ TX</span> · <span style="color: var(--green);">■ RX</span></span>
           </div>
           <canvas id="estats-canvas" width="520" height="68"></canvas>
@@ -136,34 +133,37 @@
         <div class="install-deck">
           <div class="deck-header">
             <div class="deck-tabs">
-              <button class="deck-tab active" data-pkg="scoop">SCOOP</button>
-              <button class="deck-tab" data-pkg="cargo">CARGO</button>
-              <button class="deck-tab" data-pkg="pwsh">POWERSHELL</button>
-              <button class="deck-tab" data-pkg="source">BUILD</button>
+              <button type="button" class="deck-tab active" data-pkg="scoop" aria-pressed="true">SCOOP</button>
+              <button type="button" class="deck-tab" data-pkg="apt" aria-pressed="false">APT</button>
+              <button type="button" class="deck-tab" data-pkg="dnf" aria-pressed="false">DNF</button>
+              <button type="button" class="deck-tab" data-pkg="arch" aria-pressed="false">ARCH</button>
+              <button type="button" class="deck-tab" data-pkg="brew" aria-pressed="false">HOMEBREW</button>
+              <button type="button" class="deck-tab" data-pkg="cargo" aria-pressed="false">CARGO</button>
             </div>
             <button id="copy-pkg-btn" class="hud-btn" style="height: 24px; font-size: 0.66rem; padding: 0 8px;">COPY</button>
           </div>
           <div class="deck-body">
             <div class="deck-cmd">
-              <span class="ps-prompt">PS&gt;</span><span id="pkg-cmd-display">scoop install https://github.com/sametcn99/tcptui/releases/download/v1.3.0/scoop-tcptui.json</span>
+              <code id="pkg-cmd-display" aria-live="polite">scoop install https://github.com/sametcn99/tcptui/releases/latest/download/scoop-tcptui.json</code>
             </div>
           </div>
+          <p class="deck-note"><span id="pkg-note">Windows x64. </span><a href="https://github.com/sametcn99/tcptui/blob/main/README.md#installation-and-distribution">Package downloads and installation</a></p>
         </div>
 
         <!-- Dual Binary Suite -->
         <div class="binary-split">
           <div class="binary-card">
             <div class="binary-name">
-              <span>tcptui.exe</span>
+              <span>tcptui</span>
               <span class="binary-badge">RATATUI TUI</span>
             </div>
             <div class="binary-desc">
-              Interactive socket table, EStats bandwidth chart, ETW kernel session, rules studio, whois, VirusTotal &amp; SetTcpEntry killer.
+              Interactive socket table with filters, traffic charts, rules, and connection actions.
             </div>
           </div>
           <div class="binary-card">
             <div class="binary-name">
-              <span>tcpvcon.exe</span>
+              <span>tcpvcon</span>
               <span class="binary-badge">HEADLESS CLI</span>
             </div>
             <div class="binary-desc">
@@ -215,7 +215,7 @@
           <div class="wt-tabs">
             <div class="wt-tab">
               <span style="color: var(--cyan);">■</span>
-              <span>Administrator: tcptui.exe — --etw</span>
+              <span>Windows demo: tcptui.exe --trace</span>
             </div>
           </div>
           <div class="wt-chrome-hint" style="font-size: 0.68rem; color: #64748b;">RIGHT-CLICK ROW FOR CONTEXT MENU · DOUBLE-CLICK FOR AUTHENTICODE · CLICK HEADER TO SORT</div>
@@ -343,11 +343,11 @@
     <section class="bento-section" id="architecture">
       <div class="section-banner">
         <div>
-          <div class="section-coord">02 // SYSTEM INTERNALS &amp; WIN32 TELEMETRY PIPELINE</div>
+          <div class="section-coord">02 // SOCKET COLLECTION AND TERMINAL RENDERING</div>
           <h2 data-i18n="bento_title">Engineered for Sub-Millisecond Terminal Rendering.</h2>
         </div>
         <p data-i18n="bento_sub">
-          No Electron. No Tokio async bloat. Classic <code>std::thread</code> + <code>mpsc</code> channels bridge low-level Windows IP Helper &amp; ETW kernel APIs to a deterministic Ratatui frame buffer.
+          Platform socket collectors feed a shared Ratatui interface and CLI. Polling, tracing, and reverse DNS run on background threads.
         </p>
       </div>
 
@@ -356,18 +356,18 @@
         <div class="bento-cell col-7">
           <div class="cell-tag">INTERACTIVE SCHEMATIC // CLICK A STAGE TO INSPECT RUST MODULE</div>
           <h3>4-Stage Lock-Free Collector &amp; Render Pipeline</h3>
-          <p>Click each subsystem node below to inspect the exact Win32 system calls and Rust source files powering <code>tcptui</code>:</p>
+          <p>Select a subsystem to see which operating-system APIs it uses.</p>
 
           <div class="arch-nodes">
             <div class="arch-node active" data-arch="net">
               <div class="arch-node-step">STAGE 01</div>
               <div class="arch-node-title">src/net.rs + proc.rs</div>
-              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Socket &amp; EStats Poll</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Sockets and TCP counters</div>
             </div>
             <div class="arch-node" data-arch="etw">
               <div class="arch-node-step">STAGE 02</div>
-              <div class="arch-node-title">src/etw.rs + dns.rs</div>
-              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">Kernel ETW &amp; GeoIP</div>
+              <div class="arch-node-title">src/trace/ + dns.rs</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">TCP events and GeoIP</div>
             </div>
             <div class="arch-node" data-arch="model">
               <div class="arch-node-step">STAGE 03</div>
@@ -383,7 +383,7 @@
 
           <div id="arch-inspector-box" class="arch-inspector">
             <strong style="color: var(--cyan);">[STAGE 01 // src/net.rs · src/proc.rs · src/services.rs]</strong><br />
-            Calls <code>netstat2::get_sockets_info(AF_INET | AF_INET6, TCP | UDP)</code>, queries Win32 <code>GetPerTcpConnectionEStats</code> / <code>GetPerTcp6ConnectionEStats</code> for raw <code>DataBytesOut</code> and <code>DataBytesIn</code> counters, enriches PIDs via <code>sysinfo</code>, and maps Windows Service Control Manager (SCM) services with <code>EnumServicesStatusExW</code>.
+            Windows uses IP Helper and IPv4 EStats. Linux uses inet_diag with TCP_INFO and resolves owners through /proc. macOS uses libproc to inspect sockets and nettop to sample TCP byte counts.
           </div>
         </div>
 
@@ -409,7 +409,7 @@
           <div class="cell-tag">SECURITY TELEMETRY // src/actions.rs</div>
           <h3>WinVerifyTrust Authenticode &amp; SCM Unpacking</h3>
           <p>
-            Inspect any socket to verify its executable's cryptographic signature via Windows <code>WinVerifyTrust</code>, resolve the SID token owner (<code>DOMAIN\User</code>), and unpack shared <code>svchost.exe</code> processes into exact service names.
+            Windows verifies Authenticode signatures and shows Service Control Manager names. Linux shows systemd services when available. macOS verifies executable signatures through Apple Code Signing Services.
           </p>
           <div class="code-terminal" style="font-size: 0.72rem; padding: 10px 12px;">PID 1420  svchost.exe [Service: Dnscache]
 Owner   : NT AUTHORITY\NETWORK SERVICE
@@ -419,10 +419,10 @@ Spark   : ▁▂▃▅▇█▆▄▂▁▂▄▆█▇▅▃▂ (2m traffic)</d
 
         <!-- Cell 4 (4 Cols): Kernel ETW & EStats -->
         <div class="bento-cell col-4">
-          <div class="cell-tag">KERNEL TRACE // src/etw.rs</div>
-          <h3>Event Tracing for Windows (<code>--etw</code>)</h3>
+          <div class="cell-tag">TCP CONNECTION EVENTS</div>
+          <h3>Kernel TCP tracing (<code>--trace</code>)</h3>
           <p>
-            Polling alone misses sub-second connections. With <code>--etw</code> in an elevated shell, <code>tcptui</code> opens a real-time trace session on <code>Microsoft-Windows-Kernel-Network</code> for true connect timestamps and transient connection logging.
+            Windows ETW and Linux eBPF can observe TCP connections that open and close between polls. macOS reports the changes seen during polling. Individual TCP connection closing is available on Windows (IPv4) and Linux (IPv4 and IPv6) with sufficient permissions.
           </p>
           <div class="code-terminal" style="font-size: 0.72rem; padding: 10px 12px;">[21:14:08.412] ETW CONNECT pid=44910 curl.exe
   192.168.1.111:55104 -> 93.184.216.34:443
@@ -588,7 +588,7 @@ Style  : fg=#ff2e55 bold=true bell=on</div>
               Pause Live Updates (p) · View Profiles (P)
             </h3>
             <p id="kb-display-desc" style="color: var(--text-dim); font-size: 0.92rem; line-height: 1.6;">
-              Pressing <code>p</code> freezes the live endpoint table, statistics, and bandwidth chart for undisturbed inspection while ETW connect events continue buffering in the background. Pressing <code>Shift+P</code> opens the Named View Profiles manager with TOML import/export.
+              Pressing <code>p</code> freezes the live endpoint table, statistics, and bandwidth chart for undisturbed inspection while optional connection tracing continues in the background. Pressing <code>Shift+P</code> opens the Named View Profiles manager with TOML import/export.
             </p>
           </div>
 
@@ -627,7 +627,7 @@ Style  : fg=#ff2e55 bold=true bell=on</div>
 
       <!-- Right Pane: Interactive config.toml Studio -->
       <div class="split-pane">
-        <div class="section-coord">05B // PERSISTENT PROFILE STUDIO (%APPDATA%\tcptui\config.toml)</div>
+        <div class="section-coord">05B // PERSISTENT PROFILE STUDIO</div>
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
           <h3 style="font-family: var(--font-display); font-size: 1.6rem; color: var(--text-bright);">
             Live <code>config.toml</code> Synthesizer
@@ -663,7 +663,7 @@ Style  : fg=#ff2e55 bold=true bell=on</div>
             <input id="c-estats" type="checkbox" class="cfg-input" checked />
           </label>
           <label class="cfg-item">
-            <span>etw.enabled (Kernel)</span>
+            <span>etw.enabled (Windows)</span>
             <input id="c-etw" type="checkbox" class="cfg-input" checked />
           </label>
           <label class="cfg-item">
@@ -679,7 +679,7 @@ Style  : fg=#ff2e55 bold=true bell=on</div>
     <!-- Footer -->
     <footer class="site-footer">
       <div>
-        <strong style="color: var(--text-bright);">tcptui v1.3.0</strong> // Written in Rust with Ratatui for Windows · MIT License · By <a href="https://github.com/sametcn99" target="_blank" rel="noopener">@sametcn99</a>
+        <strong style="color: var(--text-bright);">tcptui</strong> // Rust and Ratatui for Windows, Linux, and macOS · MIT License · By <a href="https://github.com/sametcn99" target="_blank" rel="noopener">@sametcn99</a>
       </div>
       <div class="footer-links">
         <a href="https://github.com/sametcn99/tcptui" target="_blank" rel="noopener">SOURCE</a>

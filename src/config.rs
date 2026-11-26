@@ -1,4 +1,4 @@
-//! Persistent configuration stored at `%APPDATA%\tcptui\config.toml`.
+//! Persistent configuration at the desktop platform’s user config location.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -246,14 +246,22 @@ pub struct Config {
     pub notifications: NotificationsConfig,
 }
 
-/// `%APPDATA%\tcptui\config.toml`.
+/// Resolve the platform's user configuration path.
 pub fn config_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|base| {
-        let mut p = PathBuf::from(base);
-        p.push("tcptui");
-        p.push("config.toml");
-        p
-    })
+    #[cfg(windows)]
+    let base = absolute_env_path("APPDATA");
+    #[cfg(target_os = "linux")]
+    let base = absolute_env_path("XDG_CONFIG_HOME")
+        .or_else(|| absolute_env_path("HOME").map(|home| home.join(".config")));
+    #[cfg(target_os = "macos")]
+    let base = absolute_env_path("HOME").map(|home| home.join("Library/Application Support"));
+    Some(base?.join("tcptui").join("config.toml"))
+}
+
+fn absolute_env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
 }
 
 impl Config {
@@ -271,7 +279,7 @@ impl Config {
 
     /// Persist current settings, creating the directory if needed.
     pub fn save(&self) -> Result<()> {
-        let path = config_path().context("APPDATA is not set; cannot resolve config path")?;
+        let path = config_path().context("cannot resolve the user configuration directory")?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;

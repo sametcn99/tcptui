@@ -124,7 +124,14 @@ fn draw_help(f: &mut Frame, app: &App, area: Rect) {
         ("g", "event log (opened/closed/user events)"),
         ("", ""),
         ("Actions", ""),
-        ("c", "close selected/marked ESTABLISHED connection(s)"),
+        (
+            "c",
+            if crate::actions::CLOSE_SUPPORTED {
+                "close selected/marked ESTABLISHED TCP connection(s)"
+            } else {
+                "individual connection closing is unavailable on macOS"
+            },
+        ),
         ("K", "end process(es) of selected/marked rows"),
         ("w", "whois lookup of remote address"),
         ("e", "export table (CSV/TSV/JSON/TXT)"),
@@ -647,11 +654,18 @@ fn draw_chart(f: &mut Frame, app: &App, area: Rect) {
                 .bounds([0.0, y_max])
                 .labels(y_labels),
         );
-    if !app.estats_enabled {
+    let counter_message = if !app.estats_enabled {
+        Some("Traffic counters disabled — enable in settings (M)")
+    } else if app.bw_total.is_empty() {
+        Some("Waiting for eligible TCP traffic samples")
+    } else {
+        None
+    };
+    if let Some(counter_message) = counter_message {
         chart = chart.block(
             popup_block(&title, app)
                 .title(Span::styled(
-                    "  [EStats disabled — enable in settings (M)]  ",
+                    format!("  [{counter_message}]  "),
                     Style::default().fg(app.theme.deleted),
                 ))
                 .title_bottom(Span::styled(
@@ -854,7 +868,7 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
         ("Show loopback", on_off(app.toggles.show_loopback)),
         ("Grouped view", on_off(app.grouped)),
         ("Theme", app.theme_name.clone()),
-        ("EStats byte counters", on_off(app.estats_enabled)),
+        (crate::net::TRAFFIC_SOURCE, on_off(app.estats_enabled)),
         ("GeoIP country column", geo_state),
         ("Bell on alerts", on_off(app.bell_enabled)),
     ];

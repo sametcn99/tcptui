@@ -1,8 +1,8 @@
 # tcptui
 
-A terminal UI clone of [Sysinternals TCPView](https://learn.microsoft.com/en-us/sysinternals/downloads/tcpview) for Windows, written in Rust with [Ratatui](https://ratatui.rs).
+A native Rust terminal monitor for TCP and UDP endpoints on Windows, Linux, and macOS. Inspired by [Sysinternals TCPView](https://learn.microsoft.com/en-us/sysinternals/downloads/tcpview) and built with [Ratatui](https://ratatui.rs).
 
-It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with the owning process, service and PID, updates live, and lets you close connections, end processes, run whois lookups, chart bandwidth, define alert and coloring rules, search with a structured filter language, sort by any column chain, and export — all from the terminal.
+Use `tcptui` to inspect connections in a live table or `tcpvcon` to filter and export them from scripts. Both show IPv4 and IPv6 endpoints and the PID and process name when the operating system makes that information available.
 
 ```
  tcptui  sort:Process ↑ resolve:off                                          1000ms
@@ -23,18 +23,31 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 | `tcptui` | Interactive terminal UI |
 | `tcpvcon` | Command-line companion, mirroring the tool that ships with TCPView |
 
+## Platform support
+
+| Feature | Windows x64 | Linux x64 and ARM64 | macOS 15+ Intel and Apple Silicon |
+|---|---|---|---|
+| TCP/UDP and process details | IP Helper and Win32 | inet_diag, `/proc`, and systemd service names where available | libproc for processes you can inspect |
+| TCP traffic counters | IPv4 EStats in an elevated terminal | IPv4 and IPv6 `TCP_INFO` | IPv4 and IPv6 byte counts where `nettop` reports a matching socket |
+| Close an established TCP connection | IPv4, elevated | IPv4 and IPv6, with `CAP_NET_ADMIN` in the current network namespace | — |
+| TCP connection event log | Snapshot changes and optional ETW | Snapshot changes and optional eBPF | Snapshot changes |
+| Executable signature check | Authenticode | — | Apple Code Signing Services |
+| End a process | With permission to terminate the process | With permission to signal the process | With permission to signal the process |
+
+Run the viewer normally for day-to-day monitoring. Linux shows endpoints in the current network namespace and can display sockets even when it cannot read their owners. On macOS, visible endpoints depend on which processes the current user can inspect. Missing byte counters stay blank.
+
 ## Feature overview
 
 **Monitoring**
-- All TCP/UDP endpoints, IPv4 + IPv6, with owning process, PID, hosted service, user account and Authenticode signature status
+- IPv4 and IPv6 TCP/UDP endpoints with process details and platform-specific metadata
 - TCPView-style change highlighting: new endpoints **green**, deleted **red**, state-changed **yellow**
-- Age column (first-seen timestamps); with the experimental ETW mode these are true connect times
+- Age column based on first observation and, when available, a matched trace event
 - Adjustable refresh rate (250 ms – 60 s, default 1 s), manual refresh (`F5`),
   pause/resume live updates (`p`) to freeze the table for inspection
 - Statistics popup (`i`) with totals and top processes by count and by traffic
 - Optional GeoIP country column with flags (see below)
-- Experimental ETW mode (`--etw`): real connect/disconnect events, transient connection logging
-- Bandwidth chart (`B`): rolling per-interval Tx/Rx deltas from the EStats counters, total system or selected endpoint (Tab)
+- Optional TCP tracing (`--trace`) for short-lived connections on Windows and Linux
+- Bandwidth chart (`B`): rolling Tx/Rx deltas across measured TCP sockets or for the selected endpoint (Tab)
 
 **Filtering and search**
 - Structured filter language: fields (`process path pid proto state laddr raddr addr lport rport port service tx rx change loopback connected`), operators (`= == != > >= < <= : =~ !~`), wildcards, byte units, `and`/`or`/`not` with parentheses
@@ -45,16 +58,16 @@ It shows every TCP and UDP endpoint on the system (IPv4 and IPv6) together with 
 **Sorting and views**
 - Multi-key sort order editor (`o`); `s` cycles, `S` reverses, header clicks sort (Shift+click appends)
 - Grouped tree view by process (`G`); watch mode (`F6`); column setup (`C`); named view profiles (`P`); settings screen (`M`)
-- Everything persists in `%APPDATA%\tcptui\config.toml`
+- View settings and profiles persist in the platform configuration file
 
 **Actions**
-- Close Connection (`c`) via `SetTcpEntry` — the same API TCPView uses; batch close/kill over marked rows (`Space`, Shift+arrows)
+- Close Connection (`c`) on Windows and Linux, and batch actions over marked rows (`Space`, Shift+arrows)
 - End Process (`K`), whois (`w`, RFC 3912 referrals), VirusTotal lookup (`V`, optional feature)
 - Copy to clipboard (`Ctrl+C` row — or TSV of all marked rows; `Ctrl+Shift+C` table; JSON via the right-click menu)
 - Right-click context menu on rows; drag header edges to resize columns; Shift+wheel scrolls horizontally
 - `tcptui --dump-frame <file> [--frame-size 120x30]` renders one live frame as text (screenshots, no terminal)
 - View profiles can be exported/imported as `[[profile]]` TOML files (P popup)
-- Process details include a system-traffic sparkline
+- Process details include a sparkline for traffic measured across visible system sockets
 - Export to CSV / TSV / JSON / text (`e`)
 
 ## Key map
@@ -93,49 +106,57 @@ service="google chrome"   quoted strings allow spaces
 chrome 127.0.0.1:443      bare text still searches every field
 ```
 
+## Configuration
+
+| Platform | Path |
+|---|---|
+| Windows | `%APPDATA%\tcptui\config.toml` |
+| Linux | `$XDG_CONFIG_HOME/tcptui/config.toml` when set to an absolute path, otherwise `~/.config/tcptui/config.toml` |
+| macOS | `~/Library/Application Support/tcptui/config.toml` |
+
+`[estats] enabled` controls TCP counters on all systems. Windows still accepts `--etw` and `[etw] enabled`. Use `--trace` to request ETW on Windows or eBPF on Linux. Tracing failures are shown in the event log while polling continues. Linux eBPF needs a kernel with BTF and permission to load tracing programs. It observes TCP state transitions in the current network namespace. A transient connection can have an unknown PID.
+
 ## Building
 
-Requirements: Rust stable (MSVC target) and the Visual Studio C++ Build Tools with a Windows SDK.
+Use Rust stable on the target system.
 
-```
-cargo build --release                     # default features (geoip)
-cargo build --release --features virustotal   # + VirusTotal lookups
-cargo build --release --no-default-features   # minimal build without geoip
-cargo test --all-features
-cargo clippy --all-targets -- -D warnings
+- **Windows** requires the MSVC C++ Build Tools and a Windows SDK.
+- **Linux** requires a C toolchain. For VirusTotal install the OpenSSL development headers and `pkg-config`. For `linux-trace` install Clang with a BPF backend and libbpf headers. On Debian/Ubuntu the optional packages are `clang libclang-dev libbpf-dev libssl-dev pkg-config`.
+- **macOS** requires Xcode Command Line Tools. With a full Xcode installation, use `export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $(xcrun --sdk macosx --show-sdk-path)"` if bindgen needs the SDK location.
+
+```sh
+cargo build --locked --release
+cargo build --locked --release --all-features
+cargo build --locked --release --no-default-features
+cargo test --locked --all-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 ```
 
-## Optional integrations
+`--all-features` enables GeoIP and VirusTotal, and includes eBPF tracing on Linux. The default build includes GeoIP. Place a [GeoLite2-Country](https://dev.maxmind.com/geoip/docs/databases/city-and-country) database next to the binary or set `[geoip] path`. To use VirusTotal, set `[virustotal] api_key` and press `V`.
 
-- **GeoIP**: place a [GeoLite2-Country](https://dev.maxmind.com/geoip/docs/databases/city-and-country) `.mmdb` database next to the executable (or configure `[geoip] path`); the Country column appears automatically. The database is not bundled (MaxMind EULA requires attribution and a free account).
-- **ETW (experimental)**: run from an elevated terminal with `--etw` (or set `[etw] enabled`) for event-driven connect/disconnect tracking. Any failure falls back to polling.
-- **VirusTotal**: build with `--features virustotal`, put your free API key in `[virustotal] api_key` in config.toml, then press `V` on an endpoint.
+## Installation and distribution
 
-## Running
+Find the assets and `sha256sums.txt` under [GitHub Releases](https://github.com/sametcn99/tcptui/releases). Each binary archive includes `tcptui` and `tcpvcon`. Choose the download for your OS and CPU architecture.
 
-- Plain `tcptui` monitors without any special rights.
-- **Close Connection** and **End Process** usually require an elevated shell for other users' processes; the title bar shows `ADMIN` when elevated. Windows Terminal is recommended; conhost works.
-- Closing IPv6 connections is not supported: Windows only exposes a setter for the IPv4 TCP table.
+| Platform | Install |
+|---|---|
+| Windows x64 | Extract the ZIP or use `scoop install https://github.com/sametcn99/tcptui/releases/latest/download/scoop-tcptui.json`. Winget submission templates are in `packaging/winget/`. |
+| Debian/Ubuntu | Download the `.deb` for `amd64` or `arm64` and run `sudo apt install ./tcptui_*.deb` from its directory. |
+| Fedora | Download the `.rpm` for `x86_64` or `aarch64` and run `sudo dnf install ./tcptui-*.rpm`. |
+| Arch Linux x64 | Download `tcptui-bin-aur.tar.gz`, extract it in a dedicated directory, and run `makepkg -si` there. The bundle contains the AUR recipe. |
+| macOS 15+ | Extract the macOS archive or install the `tcptui.rb` formula from a trusted Homebrew tap. The release supplies the formula with both architecture checksums. |
 
-## Distribution
+For a Cargo installation from the repository, use `cargo install --locked --git https://github.com/sametcn99/tcptui.git`. Run `tcptui` to open the TUI or `tcpvcon -a -n` to list endpoints without DNS lookups.
 
-CI builds on every push and publishes zipped binaries with SHA-256 checksums for every `v*` tag. Every release also carries a rendered `scoop-tcptui.json` (correct version, URL and hash) ready for Scoop buckets; the in-repo template lives in `packaging/scoop/`. For winget, fill in the templates under `packaging/winget/` (version + SHA-256 from the release) and submit them to `microsoft/winget-pkgs`.
+A `v*` tag matching `Cargo.toml` publishes only after the native build and test matrix passes. Homebrew and AUR publication use the generated formula and recipe bundle. These channels are managed separately from GitHub Releases.
 
-```
-scoop install https://github.com/sametcn99/tcptui/releases/download/v1.3.0/scoop-tcptui.json
-```
+## Architecture
 
-## Architecture notes
-
-- `src/model.rs` — data types, snapshot diffing, statistics
-- `src/filter.rs` — the structured filter language (tokenizer/parser/matcher)
-- `src/net.rs`, `src/proc.rs`, `src/services.rs` — socket enumeration, process table, SCM services
-- `src/dns.rs`, `src/geoip.rs` — background reverse DNS and optional GeoIP resolution
-- `src/actions.rs`, `src/etw.rs`, `src/vt.rs` — Windows actions (close/kill/whois/signature), experimental ETW session, optional VirusTotal client
-- `src/app.rs` — application state, collector thread, rules, profiles, chart series
-- `src/events.rs` / `src/ui/` — terminal input and rendering (event → state → render)
-- Threading is classic `std::thread` + `mpsc`; no async runtime
+- `src/net/` enumerates sockets and reads per-connection counters. `src/proc.rs` enriches PIDs and `src/services.rs` adds service metadata.
+- `src/trace/` runs Linux tracing, `src/etw.rs` runs Windows tracing, and both feed the application's event log.
+- `src/model.rs` and `src/filter.rs` share the endpoint model, diffing, statistics, and filter expressions between the TUI and CLI.
+- `src/app.rs`, the input handlers, and the Ratatui views share snapshots through `std::thread` and `mpsc`.
 
 ## License
 

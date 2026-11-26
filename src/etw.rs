@@ -6,14 +6,16 @@
 //! polling pipeline.
 //!
 //! Event payload layout (documented provider schema):
-//! - TCP connect: id 12 (IPv4) / 14 (IPv6)
-//! - TCP disconnect: id 13 (IPv4) / 15 (IPv6)
+//! - TCP connect or accept: 12/15 (IPv4), 28/31 (IPv6)
+//! - TCP disconnect: 13 (IPv4), 29 (IPv6)
 //! - payload: `PID u32, size u32, daddr, saddr, dport u16 (BE), sport u16 (BE)`
 //!   with 4-byte addresses for IPv4 and 16-byte for IPv6.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::OnceLock;
-use std::sync::mpsc::Receiver;
+use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, SyncSender};
+
+use crate::trace::{Event, Message};
 
 use windows::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_TRACE_CONTROL_STOP,
@@ -25,13 +27,11 @@ use windows::core::{GUID, PCWSTR, PWSTR};
 
 /// Microsoft-Windows-Kernel-Network provider GUID.
 pub const KERNEL_NETWORK_GUID: GUID = GUID::from_values(
-    0x9a280ac0,
-    0xc8e0,
-    0x11d1,
-    [0x84, 0xe2, 0x00, 0xc0, 0x4f, 0xb9, 0x98, 0xa2],
+    0x7dd42a49,
+    0x5329,
+    0x4832,
+    [0x8d, 0xfd, 0x43, 0xd9, 0x79, 0x15, 0x3a, 0x88],
 );
-
-const SESSION_NAME: &str = "tcptui-etw-session";
 
 /// A parsed connection event.
 #[derive(Clone, Debug, PartialEq)]
@@ -54,10 +54,10 @@ pub enum EtwEvent {
 /// tested; `None` for unrelated event ids or truncated payloads.
 pub fn parse_event(id: u16, user_data: &[u8]) -> Option<EtwEvent> {
     let (connect, v6) = match id {
-        12 => (true, false),
+        12 | 15 => (true, false),
         13 => (false, false),
-        14 => (true, true),
-        15 => (false, true),
+        28 | 31 => (true, true),
+        29 => (false, true),
         _ => return None,
     };
     let need = if v6 { 44 } else { 20 };
@@ -108,7 +108,7 @@ fn port_be(bytes: &[u8]) -> u16 {
 
 // The ETW callback has no user context parameter, so events travel through
 // a process-global channel installed when the session starts.
-static EVENT_SINK: OnceLock<std::sync::mpsc::Sender<EtwEvent>> = OnceLock::new();
+static EVENT_SINK: Mutex<Option<SyncSender<Message>>> = Mutex::new(None);
 
 unsafe extern "system" fn event_record_callback(
     record: *mut windows::Win32::System::Diagnostics::Etw::EVENT_RECORD,
@@ -125,10 +125,38 @@ unsafe extern "system" fn event_record_callback(
     }
     let data = unsafe { std::slice::from_raw_parts(record.UserData as *const u8, len) };
     let id = record.EventHeader.EventDescriptor.Id;
-    if let Some(event) = parse_event(id, data)
-        && let Some(sink) = EVENT_SINK.get()
+    let Some(parsed) = parse_event(id, data) else {
+        return;
+    };
+    let connected = matches!(parsed, EtwEvent::Connect { .. });
+    let (pid, local, remote) = match parsed {
+        EtwEvent::Connect {
+            pid, local, remote, ..
+        }
+        | EtwEvent::Disconnect {
+            pid, local, remote, ..
+        } => (pid, local, remote),
+    };
+    // ProcessTrace converts session timestamps to FILETIME when raw mode is off.
+    const WINDOWS_EPOCH: i64 = 116_444_736_000_000_000;
+    let at = record
+        .EventHeader
+        .TimeStamp
+        .checked_sub(WINDOWS_EPOCH)
+        .and_then(|ticks| chrono::DateTime::from_timestamp_micros(ticks / 10))
+        .map(|time| time.with_timezone(&chrono::Local))
+        .unwrap_or_else(chrono::Local::now);
+    if let Ok(sink) = EVENT_SINK.lock()
+        && let Some(sink) = sink.as_ref()
     {
-        let _ = sink.send(event);
+        let _ = sink.try_send(Message::Event(Event {
+            connected,
+            local,
+            remote,
+            pid: Some(pid),
+            cookie: None,
+            at,
+        }));
     }
 }
 
@@ -136,69 +164,50 @@ unsafe extern "system" fn event_record_callback(
 pub struct EtwSession {
     trace_handle: windows::Win32::System::Diagnostics::Etw::CONTROLTRACE_HANDLE,
     process_handle: windows::Win32::System::Diagnostics::Etw::PROCESSTRACE_HANDLE,
-    props: Vec<u8>,
+    props: Vec<u64>,
     name_wide: Vec<u16>,
 }
 
 impl EtwSession {
     /// Start the session; returns the event receiver on success.
-    pub fn start() -> Result<(EtwSession, Receiver<EtwEvent>), String> {
+    pub fn start() -> Result<(EtwSession, Receiver<Message>), String> {
         if !crate::actions::is_elevated() {
             return Err("ETW requires an elevated (administrator) terminal".to_string());
         }
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        let _ = EVENT_SINK.set(tx);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1024);
+        let mut sink = EVENT_SINK
+            .lock()
+            .map_err(|_| "ETW event sink unavailable")?;
+        if sink.is_some() {
+            return Err("an ETW session is already running in this process".into());
+        }
 
-        let mut name_wide: Vec<u16> = SESSION_NAME
+        let mut name_wide: Vec<u16> = format!("tcptui-etw-{}", std::process::id())
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
 
-        // Properties struct plus room for the session name string.
+        // Use word-aligned storage for EVENT_TRACE_PROPERTIES plus the wide name.
         let props_size = std::mem::size_of::<EVENT_TRACE_PROPERTIES>();
-        let mut props = vec![0u8; props_size + (name_wide.len() * 2)];
-        {
-            let p = unsafe { (props.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES).as_mut() };
-            let Some(p) = p else {
-                return Err("internal error: properties alignment".to_string());
-            };
-            p.Wnode.BufferSize = props_size as u32;
-            p.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
-            p.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-            p.LoggerNameOffset = props_size as u32;
+        let name_size = name_wide.len() * 2;
+        let buffer_size = (props_size + name_size).next_multiple_of(8);
+        let mut props = vec![0u64; buffer_size / 8];
+        let properties = props.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
+        unsafe {
+            (*properties).Wnode.BufferSize = buffer_size as u32;
+            (*properties).Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+            (*properties).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+            (*properties).FlushTimer = 1;
+            (*properties).LoggerNameOffset = props_size as u32;
+            std::ptr::copy_nonoverlapping(
+                name_wide.as_ptr().cast::<u8>(),
+                props.as_mut_ptr().cast::<u8>().add(props_size),
+                name_size,
+            );
         }
-        // Write the session name right behind the struct.
-        props[props_size..props_size + name_wide.len() * 2].copy_from_slice(unsafe {
-            std::slice::from_raw_parts(name_wide.as_ptr().cast::<u8>(), name_wide.len() * 2)
-        });
-
         let mut trace_handle = Default::default();
-        let mut rc = unsafe {
-            StartTraceW(
-                &mut trace_handle,
-                PCWSTR(name_wide.as_ptr()),
-                props.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES,
-            )
-        };
-        if rc.0 == 183 {
-            // ERROR_ALREADY_EXISTS: stop a leftover session and retry once.
-            let _ = unsafe {
-                ControlTraceW(
-                    Default::default(),
-                    PCWSTR(name_wide.as_ptr()),
-                    props.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES,
-                    EVENT_TRACE_CONTROL_STOP,
-                )
-            };
-            rc = unsafe {
-                StartTraceW(
-                    &mut trace_handle,
-                    PCWSTR(name_wide.as_ptr()),
-                    props.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES,
-                )
-            };
-        }
+        let rc = unsafe { StartTraceW(&mut trace_handle, PCWSTR(name_wide.as_ptr()), properties) };
         if rc.0 == 5 {
             return Err("access denied: start tcptui from an elevated terminal".to_string());
         }
@@ -236,12 +245,19 @@ impl EtwSession {
         }
 
         // ProcessTrace blocks until CloseTrace, so it owns its own thread.
-        std::thread::Builder::new()
+        if let Err(error) = std::thread::Builder::new()
             .name("etw-process".into())
             .spawn(move || {
                 let _ = unsafe { ProcessTrace(&[process_handle], None, None) };
             })
-            .map_err(|e| format!("failed to spawn ETW thread: {e}"))?;
+        {
+            unsafe {
+                let _ = CloseTrace(process_handle);
+                stop_session(trace_handle, &mut props, &mut name_wide);
+            }
+            return Err(format!("failed to spawn ETW thread: {error}"));
+        }
+        *sink = Some(tx);
 
         Ok((
             EtwSession {
@@ -257,7 +273,7 @@ impl EtwSession {
 
 unsafe fn stop_session(
     trace_handle: windows::Win32::System::Diagnostics::Etw::CONTROLTRACE_HANDLE,
-    props: &mut [u8],
+    props: &mut [u64],
     name_wide: &mut [u16],
 ) {
     unsafe {
@@ -276,6 +292,9 @@ impl Drop for EtwSession {
         unsafe {
             let _ = CloseTrace(self.process_handle);
             stop_session(self.trace_handle, &mut self.props, &mut self.name_wide);
+        }
+        if let Ok(mut sink) = EVENT_SINK.lock() {
+            *sink = None;
         }
     }
 }
@@ -328,7 +347,7 @@ mod tests {
         v.extend_from_slice(&[0x01u8; 16]); // saddr
         v.extend_from_slice(&443u16.to_be_bytes()); // dport
         v.extend_from_slice(&1234u16.to_be_bytes()); // sport
-        let e = parse_event(14, &v).unwrap();
+        let e = parse_event(28, &v).unwrap();
         match e {
             EtwEvent::Connect {
                 v6, local, remote, ..
